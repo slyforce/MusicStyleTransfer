@@ -1,9 +1,9 @@
 import numpy as np
 
-from MIDIUtil.defaults import *
-from MIDIUtil.MIDIReader import MIDIReader
+from ..MIDIUtil.defaults import *
+from ..MIDIUtil.MIDIReader import MIDIReader
 
-from MIDIUtil.RangeRestrictor import GuitarRangeRestrictor, BassRangeRestrictor, RangeRestrictor
+from ..MIDIUtil.RangeRestrictor import GuitarRangeRestrictor, BassRangeRestrictor, RangeRestrictor
 
 import glob
 
@@ -19,9 +19,9 @@ class Loader:
 
     def read_melodies(self):
         self.melodies = []
-        print "Reading from: ", self.path
+        print("Reading from: ", self.path)
         for file_name in glob.glob(self.path + "/*.mid"):
-            print "Reading:", file_name
+            print("Reading:", file_name)
             self.melodies += self.midi_reader.read_file(file_name)[0]
 
         self._restrict_melodies()
@@ -59,9 +59,9 @@ class FeatureManager:
         self.feature_begin = data_information._range_begin
         self.silence_idx = self.feature_length - 1
 
-        print "feature length:", self.feature_length
-        print "feature begin:", self.feature_begin
-        print "silence index:", self.silence_idx
+        print("feature length:", self.feature_length)
+        print("feature begin:", self.feature_begin)
+        print("silence index:", self.silence_idx)
 
     def get_silence_idx(self):
         return self.silence_idx
@@ -96,7 +96,7 @@ class FeatureManager:
 
         self.data = data
 
-        print "shape of training data:", self.data.shape
+        print("shape of training data:", self.data.shape)
         return self.data
 
     def train_batch(self, n):

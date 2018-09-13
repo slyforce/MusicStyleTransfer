@@ -1,8 +1,8 @@
 import tensorflow as tf
-from config import get_config
-from trainer import Trainer
+from .config import get_config
+from .trainer import Trainer
 
-from data import Loader, FeatureManager
+from .data import Loader, FeatureManager
 
 sess = tf.Session()
 config, _ = get_config()
