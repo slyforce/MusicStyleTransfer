@@ -5,10 +5,12 @@ from .MelodyWriter import MelodyWriter
 from .Note import Note
 from .defaults import *
 
+
 class TickInformation:
     '''
     Helper class to store which pitch is being played a tick time interval
     '''
+
     def __init__(self, note=SILENCE, start_tick=0, end_tick=0):
         self.note = note
         self.start_tick = start_tick
@@ -34,7 +36,8 @@ class MIDIReader:
             notes_played = []
             track.make_ticks_abs()
             for event in track:
-                if (isinstance(event, midi.NoteOnEvent) or isinstance(event, midi.NoteOffEvent)):
+                if (isinstance(event, midi.NoteOnEvent)
+                        or isinstance(event, midi.NoteOffEvent)):
                     if event.data[1] > 0:
                         # We got the duration of the pitch last played
                         tick_information = TickInformation()
@@ -49,7 +52,8 @@ class MIDIReader:
                     new_melody.description = event.text
 
             new_melody.notes = []
-            last_tick = reversed(track).next().tick # TODO: works in python 3.5?
+            # TODO: works in python 3.5?
+            last_tick = reversed(track).next().tick
             for i in range(0, last_tick, int(note_window)):
                 new_note = Note()
                 junk_elements = []

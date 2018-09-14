@@ -5,7 +5,7 @@ import midi
 
 class Note:
     def __init__(self,
-                 midi_pitch: int=None):
+                 midi_pitch: int = None):
 
         if midi_pitch is None:
             # The pitch of the note

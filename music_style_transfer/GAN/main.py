@@ -1,16 +1,61 @@
 import tensorflow as tf
-from .config import get_config
-from .trainer import Trainer
+from . import data
+from . import model
+from . import trainer
 
-from .data import Loader, FeatureManager
 
-sess = tf.Session()
-config, _ = get_config()
+def create_toy_model_configs(data):
+    encoder_config = model.TransformerConfig(
+        n_layers=2,
+        model_dim=32,
+        hidden_dim=32
+    )
 
-data_loader = Loader(config.dataset, config.restrict)
-feature_manager = FeatureManager(data_loader.restrictor)
-feature_manager.generate_data(data_loader.melodies)
+    embedding_config = model.EmbeddingConfig(
+        input_dim=data.num_tokens(),
+        hidden_dim=32
+    )
 
-trainer = Trainer(config, feature_manager)
+    class_embedding_config = model.EmbeddingConfig(
+        input_dim=data.num_classes(),
+        hidden_dim=32
+    )
 
-trainer.train()
+    generator_config = model.GeneratorConfig(
+        encoder_config=model.TransformerConfig(
+            n_layers=2,
+            model_dim=32,
+            hidden_dim=32),
+        embedding_config=model.EmbeddingConfig(
+            input_dim=data.num_tokens(),
+            hidden_dim=32),
+        conditional_class_config=model.EmbeddingConfig(
+            input_dim=data.num_classes(),
+            hidden_dim=32),
+        output_layer_config=model.OutputLayerConfig(
+            output_dim=data.num_tokens()),
+        class_output_layer_config=model.OutputLayerConfig(
+            output_dim=data.num_classes())
+    )
+
+    discriminator_config = model.GeneratorConfig(
+        encoder_config=model.TransformerConfig(
+            n_layers=2,
+            model_dim=32,
+            hidden_dim=32),
+        embedding_config=model.EmbeddingConfig(
+            input_dim=data.num_tokens(),
+            hidden_dim=32),
+        conditional_class_config=model.EmbeddingConfig(
+            input_dim=data.num_classes(),
+            hidden_dim=32),
+        output_layer_config=model.OutputLayerConfig(
+            output_dim=1,
+            softmax=False)
+    )
+
+    return generator_config, discriminator_config
+
+def main():
+    dataset = data.ToyData()
+

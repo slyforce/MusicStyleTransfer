@@ -2,6 +2,7 @@ from .MIDIReader import MIDIReader
 from .MelodyWriter import MelodyWriter
 from .Melody import Melody
 
+
 class MIDISplitter:
     def __init__(self):
         self.midi_reader = MIDIReader()

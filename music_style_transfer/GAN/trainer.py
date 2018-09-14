@@ -1,106 +1,78 @@
 import tensorflow as tf
 
-from .model import MIDINetDiscriminator, MIDINetGenerator, MIDINetGeneratorSampleInput
-from ..MIDIUtil.defaults import *
-from ..MIDIUtil.MelodyWriter import MelodyWriter
-from ..MIDIUtil.Melody import Melody
-from ..MIDIUtil.Note import Note, SilenceNote
+from . import model
 
-import numpy as np
+
+class OptimizerConfig:
+    def __init__(self,
+                 optimizer: str,
+                 learning_rate: float):
+        self.optimizer = optimizer
+        self.learning_rate = learning_rate
+
+
+class TrainConfig:
+    def __init__(self,
+                 batch_size: int,
+                 g_optimizer: OptimizerConfig,
+                 d_optimizer: OptimizerConfig):
+        self.batch_size = batch_size
+        self.g_optimizer = g_optimizer
+        self.d_optimizer = d_optimizer
 
 
 class Trainer:
-    def __init__(self, config, data_loader):
+    def __init__(self,
+                 config: TrainConfig,
+                 generator: model.Generator,
+                 discriminator: model.Discriminator):
         self.config = config
-        self.data_loader = data_loader
-        self.batch_size = config.batch_size
-        self.use_cgan = config.use_cgan
+        self.generator = generator
+        self.discriminator = discriminator
 
-        self.build_models()
+    def _initialize_optimizers(self):
+        if self.config.g_optimizer.optimizer == 'adam':
+            self.g_optimizer = tf.train.AdamOptimizer(
+                learning_rate=self.config.g_optimizer.learning_rate)
+        else:
+            raise NotImplementedError
 
-        self.step = tf.Variable(0, name='step', trainable=False)
-        self.step_increment = tf.assign(self.step, self.step + 1)
+        if self.config.d_optimizer.optimizer == 'adam':
+            self.d_optimizer = tf.train.AdamOptimizer(
+                learning_rate=self.config.d_optimizer.learning_rate)
+        else:
+            raise NotImplementedError
 
-        self.max_step = config.max_step
-        self.log_step = config.log_step
-        self.model_dir = config.model_dir
-        self.load_path = config.load_path
+    def fit(self, dataset, epochs=10):
 
-        self.saver = tf.train.Saver()
-        self.summary_writer = tf.summary.FileWriter(self.model_dir)
-        self.summary_op = tf.summary.merge_all()
+        n_batches = 0
+        for epoch in range(epochs):
+            for tokens, conditional_class in dataset:
+                sequence_lengths = tf.reduce_sum(tokens != 0., axis=1)
+                real_inputs = [tokens, sequence_lengths, conditional_class]
 
-        sv = tf.train.Supervisor(logdir=self.model_dir,
-                                 is_chief=True,
-                                 saver=self.saver,
-                                 summary_op=None,
-                                 summary_writer=self.summary_writer,
-                                 save_model_secs=300,
-                                 global_step=self.step,
-                                 ready_for_local_init_op=None)
+                with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+                    generated_inputs = self.generator(
+                        real_inputs, training=True)
 
-        gpu_options = tf.GPUOptions(allow_growth=True)
-        sess_config = tf.ConfigProto(allow_soft_placement=True,
-                                     gpu_options=gpu_options)
+                    real_output = self.discriminator(
+                        real_inputs, training=True)
+                    generated_output = self.discriminator(
+                        generated_inputs, training=True)
 
-        self.sess = sv.prepare_or_wait_for_session(config=sess_config)
+                    gen_loss = model.generator_loss(generated_output)
+                    disc_loss = model.discriminator_loss(
+                        real_output, generated_output)
 
-        self.log_dir = config.sample_dir
-        self.midi_writer = MelodyWriter()
+                gradients_of_generator = gen_tape.gradient(
+                    gen_loss, self.generator.variables)
+                gradients_of_discriminator = disc_tape.gradient(
+                    disc_loss, self.discriminator.variables)
 
-    def build_gan_models(self):
-        raise NotImplementedError
+                self.g_optimizer.apply_gradients(
+                    zip(gradients_of_generator, self.generator.variables))
+                self.d_optimizer.apply_gradients(
+                    zip(gradients_of_discriminator, self.discriminator.variables))
 
-    def build_models(self):
-        self.x = tf.placeholder(
-            shape=[
-                self.batch_size,
-                MAXIMUM_SEQUENCE_LENGTH,
-                self.data_loader.get_feature_length(),
-                1],
-            dtype=tf.float32)
-
-        self.build_gan_models()
-
-        self.D_loss = - tf.reduce_mean(tf.log(self.D) + tf.log(1 - self.D_G))
-        # - 0.1 * column_distance_loss(self.G))  # as said in
-        self.G_loss = - tf.reduce_mean(tf.log(self.D_G))
-        # https://github.com/soumith/ganhacks
-
-        self.D_train_step = tf.train.AdamOptimizer(
-            learning_rate=1e-6).minimize(self.D_loss, var_list=[self.vars_D])
-        self.G_train_step = tf.train.AdamOptimizer(
-            learning_rate=1e-5).minimize(self.G_loss, var_list=[self.vars_G])
-
-
-    def train(self):
-        for iteration in range(0, self.max_step):
-            for _ in range(0, 1):
-                fetch_list = [self.summary_op,
-                              self.D_train_step,
-                              self.D_loss,
-                              self.D]
-                feed_dict = {
-                    self.x: self.data_loader.train_batch(
-                        self.batch_size)}
-                summary, _, d_loss, D = self.sess.run(fetch_list, feed_dict)
-
-            for _ in range(0, 2):
-                fetch_list = [self.summary_op,
-                              self.G_train_step,
-                              self.G_loss,
-                              self.G]
-                feed_dict = {}
-                summary, _, g_loss, G = self.sess.run(fetch_list, feed_dict)
-
-            self.sess.run(self.step_increment)
-            self.summary_writer.add_summary(
-                summary, self.step.eval(session=self.sess))
-
-            if iteration % self.log_step == 0:
-                print("G_loss: ", g_loss)
-                print("D_loss: ", d_loss)
-                print("--------------------------")
-
-    def save_output_to_file(self, output, filename):
-        raise NotImplementedError
+                n_batches += 1
+                print("G/D loss {} / {}".format(gen_loss, disc_loss))

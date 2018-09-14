@@ -1,8 +1,8 @@
 import numpy as np
+import tensorflow as tf
 
 from ..MIDIUtil.defaults import *
 from ..MIDIUtil.MIDIReader import MIDIReader
-
 from ..MIDIUtil.RangeRestrictor import GuitarRangeRestrictor, BassRangeRestrictor, RangeRestrictor
 
 import glob
@@ -123,3 +123,20 @@ class FeatureManager:
 
     def get_number_samples(self):
         return self.data.shape[0]
+
+
+class ToyData:
+    def __init__(self):
+        self.tokens = np.array([[1, 2, 3, 0, 0],
+                                [2, 3, 4]])
+        self.classes = np.array([1, 2])
+
+    def num_classes(self):
+        return 2
+
+    def num_tokens(self):
+        return 3
+
+    def get_iterator(self):
+        ds = tf.data.Dataset.from_tensor_slices(self.tokens).batch(1)
+        return ds

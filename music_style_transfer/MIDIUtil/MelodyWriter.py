@@ -1,6 +1,7 @@
 from .defaults import *
 import midi
 
+
 class MelodyWriter:
     def __init__(self):
         self.tempo = DEFAULT_TEMPO
@@ -8,7 +9,11 @@ class MelodyWriter:
     def get_midi_pitch(self, note):
         return note.octave * N_PITCHES + note.pitch
 
-    def write_to_file(self, file_name, melody, tick_step_size=DEF_TICK_STEP_SIZE):
+    def write_to_file(
+            self,
+            file_name,
+            melody,
+            tick_step_size=DEF_TICK_STEP_SIZE):
         pattern = midi.Pattern()
         pattern.resolution = melody.tempo
 

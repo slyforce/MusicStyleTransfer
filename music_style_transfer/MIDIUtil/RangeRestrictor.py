@@ -2,6 +2,7 @@ from .Melody import Melody
 from .Note import Note, SilenceNote
 from .defaults import *
 
+
 class RangeRestrictor:
     def __init__(self):
         self._range_begin = 0
