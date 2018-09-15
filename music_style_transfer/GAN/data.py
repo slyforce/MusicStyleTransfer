@@ -7,7 +7,6 @@ from ..MIDIUtil.RangeRestrictor import GuitarRangeRestrictor, BassRangeRestricto
 
 import glob
 
-
 class Loader:
     def __init__(self, path, range_type):
         self.path = path
@@ -124,19 +123,44 @@ class FeatureManager:
     def get_number_samples(self):
         return self.data.shape[0]
 
-
-class ToyData:
-    def __init__(self):
-        self.tokens = np.array([[1, 2, 3, 0, 0],
-                                [2, 3, 4]])
-        self.classes = np.array([1, 2])
+class Dataset:
+    def __init__(self,
+                 tokens: np.ndarray,
+                 classes: np.ndarray,
+                 batch_size: int):
+        self.tokens = tokens
+        self.classes = classes
+        self.batch_size = batch_size
 
     def num_classes(self):
-        return 2
+        raise NotImplementedError
 
     def num_tokens(self):
+        raise NotImplementedError
+
+    def __iter__(self):
+        raise NotImplementedError
+
+
+class ToyData(Dataset):
+    def __init__(self,
+                 tokens: np.ndarray,
+                 classes: np.ndarray,
+                 batch_size: int):
+        super(ToyData, self).__init__(tokens, classes, batch_size)
+        self.tokens = tf.constant([[1, 2, 3, 0, 0],
+                                   [2, 3, 4, 0, 0]])
+        self.classes = tf.constant([1,2])
+        self.batch_size = 1
+
+    def num_classes(self):
         return 3
 
-    def get_iterator(self):
-        ds = tf.data.Dataset.from_tensor_slices(self.tokens).batch(1)
-        return ds
+    def num_tokens(self):
+        return 5
+
+    def __iter__(self):
+        ds = tf.data.Dataset.from_tensor_slices((self.tokens, self.classes)).batch(self.batch_size)
+        for tokens, classes in ds:
+            yield tokens, classes
+

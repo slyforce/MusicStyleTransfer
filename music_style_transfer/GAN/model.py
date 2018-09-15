@@ -1,5 +1,7 @@
 import tensorflow as tf
+from tensorflow.keras.layers import Embedding, LSTM, Dense
 tf.enable_eager_execution()
+tfe = tf.contrib.eager
 
 
 class TransformerConfig:
@@ -15,9 +17,11 @@ class TransformerConfig:
 class EmbeddingConfig:
     def __init__(self,
                  input_dim: int,
-                 hidden_dim: int):
+                 hidden_dim: int,
+                 mask_zero: bool):
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
+        self.mask_zero = mask_zero
 
 
 class OutputLayerConfig:
@@ -28,75 +32,7 @@ class OutputLayerConfig:
         self.softmax = softmax
 
 
-from opennmt.encoders.self_attention_encoder import SelfAttentionEncoder
-
-
-class Encoder:
-    def __init__(self,
-                 config: TransformerConfig):
-        self.config = config
-
-        self.encoder = SelfAttentionEncoder(
-            num_layers=config.n_layers,
-            num_units=config.model_dim,
-            ffn_inner_dim=config.hidden_dim
-        )
-
-    def encode(self, input, seq_len, mode='train'):
-        """
-        :param input: shape (batch_size, seq_len)
-        :param seq_len: shape (batch_size,)
-        :param mode: 'train' or 'infer'
-        :return:
-        """
-        return self.encoder.encode(input, seq_len, mode)
-
-
-class Embedding:
-    def __init__(self, config: EmbeddingConfig):
-        self.config = config
-        self.embedding = tf.keras.layers.Embedding(
-            input_dim=config.input_dim,
-            output_dim=config.hidden_dim,
-            mask_zero=True)
-
-    def encode(self, input):
-        return self.embedding.call(input)
-
-
-class BagOfEmbeddings:
-    def __init__(self, config: EmbeddingConfig):
-        self.config = config
-        self.embedding = tf.keras.layers.Dense(units=config.hidden_dim,
-                                               use_bias=False)
-
-    def encode(self, input):
-        if len(tf.shape(input)) == 2:
-            input = tf.one_hot(input,
-                               depth=self.config.input_dim,
-                               on_value=1.,
-                               off_value=0.)
-
-        return self.embedding.call(input)
-
-
-class OutputLayer:
-    def __init__(self, config: OutputLayerConfig):
-        self.config = config
-
-        self.layer = tf.keras.layers.Dense(units=self.config.output_dim)
-
-        if not self.config.softmax:
-            self.softmax = tf.keras.layers.Softmax()
-
-    def call(self, x):
-        x = self.layer.call(x)
-        if not self.config.softmax:
-            x = self.softmax(x)
-        return x
-
-
-class GeneratorConfig:
+class ModelConfig:
     def __init__(self,
                  encoder_config: TransformerConfig,
                  embedding_config: EmbeddingConfig,
@@ -112,16 +48,34 @@ class GeneratorConfig:
 
 class Generator(tf.keras.Model):
     def __init__(self,
-                 config: GeneratorConfig):
+                 config: ModelConfig):
         super(Generator, self).__init__()
         self.config = config
 
-        self.encoder = Encoder(self.config.encoder_config)
-        self.embeddings = Embedding(self.config.embedding_config)
-        self.class_embeddings = Embedding(self.config.conditional_class_config)
+        self.encoder = LSTM(
+            units=config.encoder_config.hidden_dim,
+            return_sequences=True
+        )
 
-        self.output_layer = OutputLayer(self.config.output_layer_config)
-        self.class_output_layer = OutputLayer(self.config.output_layer_config)
+        self.embeddings = Embedding(
+            input_dim=self.config.embedding_config.input_dim,
+            output_dim=self.config.embedding_config.hidden_dim,
+            mask_zero=self.config.embedding_config.mask_zero
+        )
+
+        self.class_embeddings = Embedding(
+            input_dim=self.config.conditional_class_config.input_dim,
+            output_dim=self.config.conditional_class_config.hidden_dim,
+            mask_zero=self.config.conditional_class_config.mask_zero
+        )
+
+        self.output_layer = Dense(
+            units=self.config.output_layer_config.output_dim
+        )
+
+        self.class_output_layer = Dense(
+            units=self.config.class_output_layer_config.output_dim
+        )
 
     def call(self, inputs, training=True, mask=None):
         """
@@ -134,53 +88,57 @@ class Generator(tf.keras.Model):
         :param mask:
         :return:
         """
-        [source_tokens, sequence_length, conditional_class] = inputs
+        [source_tokens, conditional_class] = inputs
 
         # get the embeddings for the source tokens and conditional class
         # shape: (batch_size, seq_len, h_dim)
-        source_emb = self.embeddings.encode(source_tokens)
+        source_emb = self.embeddings(source_tokens)
         # shape: (batch_size, h_dim)
-        class_emb = self.class_embeddings.encode(conditional_class)
+        class_emb = self.class_embeddings(conditional_class)
 
-        # TODO: this should be a layer (lambda layer?)
         # shape: (batch_size, 1, h_dim)
         class_emb = tf.expand_dims(class_emb, axis=1)
 
         # place the class embedding in the first position
-        encoder_input = tf.concat([class_emb, source_emb], concat_dim=1)
-        extended_sequence_length = sequence_length + \
-            tf.ones_like(sequence_length)
+        encoder_input = tf.concat([source_emb, class_emb], 1)
 
         # call encoder on the sequence to generate a sequence of encoded tokens
         # of the same length
-        encoder_output = self.encoder.encode(
-            encoder_input,
-            extended_sequence_length,
-            'train' if training else 'infer')
+        encoder_output = self.encoder(encoder_input)
 
         # separate class token and embeddings
-        class_emb = encoder_output[:, 0, :]
-        token_emb = encoder_output[:, 1:, :]
+        class_emb = tf.slice(encoder_output, [0, 0, 0], [-1, 1, -1])
+        token_emb = tf.slice(encoder_output, [0, 1, 0], [-1, -1, -1])
 
         # project the encoder outputs to the respective class vocabulary sizes
-        class_output = self.class_output_layer.call(class_emb)
-        token_output = self.output_layer.call(token_emb)
+        token_output = tf.nn.softmax(self.output_layer(token_emb))
+        class_output = tf.nn.softmax(tf.squeeze(self.class_output_layer(class_emb), axis=1))
 
-        return token_output, sequence_length, class_output
+        return token_output, class_output
 
 
 class Discriminator(tf.keras.Model):
     def __init__(self,
-                 config: GeneratorConfig):
+                 config: ModelConfig):
         super(Discriminator, self).__init__()
         self.config = config
 
-        self.encoder = Encoder(self.config.encoder_config)
-        self.embeddings = BagOfEmbeddings(self.config.embedding_config)
-        self.class_embeddings = BagOfEmbeddings(
-            self.config.conditional_class_config)
+        self.encoder = LSTM(
+            units=config.encoder_config.hidden_dim,
+            return_sequences=True
+        )
 
-        self.output_layer = OutputLayer(self.config.output_layer_config)
+        self.embeddings = Dense(
+            units=self.config.embedding_config.hidden_dim
+        )
+
+        self.class_embeddings = Dense(
+            units=self.config.conditional_class_config.hidden_dim
+        )
+
+        self.output_layer = Dense(
+            units=self.config.output_layer_config.output_dim
+        )
 
     def call(self, inputs, training=True, mask=None):
         """
@@ -193,29 +151,22 @@ class Discriminator(tf.keras.Model):
         :param mask:
         :return:
         """
-        [source_tokens, sequence_length, conditional_class] = inputs
+
+        [source_tokens, conditional_class] = inputs
+        conditional_class, source_tokens = self._convert_input_to_one_hot(conditional_class, source_tokens)
 
         # get the embeddings for the source tokens and conditional class
         # shape: (batch_size, seq_len, h_dim)
-        source_emb = self.embeddings.encode(source_tokens)
-        # shape: (batch_size, h_dim)
-        class_emb = self.class_embeddings.encode(conditional_class)
-
-        # TODO: this should be a layer (lambda layer?)
+        source_emb = self.embeddings(source_tokens)
         # shape: (batch_size, 1, h_dim)
-        class_emb = tf.expand_dims(class_emb, axis=1)
+        class_emb = tf.expand_dims(self.class_embeddings(conditional_class), axis=1)
 
         # place the class embedding in the first position
-        encoder_input = tf.concat([class_emb, source_emb], concat_dim=1)
-        extended_sequence_length = sequence_length + \
-            tf.ones_like(sequence_length)
+        encoder_input = tf.concat([class_emb, source_emb], axis=1)
 
         # call encoder on the sequence to generate a sequence of encoded tokens
         # of the same length
-        encoder_output = self.encoder.encode(
-            encoder_input,
-            extended_sequence_length,
-            'train' if training else 'infer')
+        encoder_output = self.encoder(encoder_input)
 
         # take the maximum values over the time axis
         # shape (batch_size, hidden_dim)
@@ -223,9 +174,22 @@ class Discriminator(tf.keras.Model):
 
         # project to a scalar
         # shape (batch_size, 1)
-        encoder_output = self.output_layer.call(encoder_output)
+        encoder_output = self.output_layer(encoder_output)
 
         return encoder_output
+
+    def _convert_input_to_one_hot(self, conditional_class, source_tokens):
+        if tf.shape(source_tokens).shape == 2:
+            source_tokens = tf.one_hot(source_tokens,
+                                       depth=self.config.embedding_config.input_dim,
+                                       on_value=1.,
+                                       off_value=0.)
+        if tf.shape(conditional_class).shape == 1:
+            conditional_class = tf.one_hot(conditional_class,
+                                           depth=self.config.conditional_class_config.input_dim,
+                                           on_value=1.,
+                                           off_value=0.)
+        return conditional_class, source_tokens
 
 
 def discriminator_loss(real_output, generated_output):
