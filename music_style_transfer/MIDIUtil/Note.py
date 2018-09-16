@@ -19,14 +19,14 @@ class Note:
         self.length = DEF_TICK_STEP_SIZE
 
         # Whether the note is being played or articulated
-        self.articulated = True
+        self.articulated = False
 
     def set_from_midi_pitch(self, midi_pitch: int):
         if midi_pitch == 120:
             self.octave = 0
             self.pitch = SILENCE
         else:
-            self.octave = midi_pitch / N_PITCHES
+            self.octave = midi_pitch // N_PITCHES
             self.pitch = midi_pitch % N_PITCHES
 
     def get_midi_index(self):

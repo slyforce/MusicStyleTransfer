@@ -4,26 +4,45 @@ import tensorflow as tf
 from ..MIDIUtil.defaults import *
 from ..MIDIUtil.MIDIReader import MIDIReader
 from ..MIDIUtil.RangeRestrictor import GuitarRangeRestrictor, BassRangeRestrictor, RangeRestrictor
+from ..MIDIUtil.Melody import Melody
+
+from typing import Dict, List
 
 import glob
+import os
+
 
 class Loader:
-    def __init__(self, path, range_type):
+    def __init__(self,
+                 path: str,
+                 max_sequence_length: int,
+                 slices_per_quarter_note: int,
+                 range_type: str = ''):
         self.path = path
+        self.max_sequence_length = max_sequence_length
+        self.slices_per_quarter_note = slices_per_quarter_note
         self.range_type = range_type
+        assert range_type == '', "No support for restricted ranges yet"
 
         self._initialize_restrictor()
-        self.midi_reader = MIDIReader()
-        self.read_melodies()
+        self.midi_reader = MIDIReader(self.slices_per_quarter_note)
+        self.melodies = self.read_melodies()
 
     def read_melodies(self):
-        self.melodies = []
-        print("Reading from: ", self.path)
-        for file_name in glob.glob(self.path + "/*.mid"):
-            print("Reading:", file_name)
-            self.melodies += self.midi_reader.read_file(file_name)[0]
+        print("Reading from {}".format(self.path))
+        melodies = {}
+        directories = next(os.walk(self.path))[1]
+        for directory in directories:
+            melodies[directory] = []
+            for fname in glob.glob(self.path + '/' + directory + "/*.mid"):
+                print("Reading {}".format(fname))
 
-        self._restrict_melodies()
+                melody = self.midi_reader.read_file(fname)[0]
+                print(melody)
+                melodies[directory] += melody.split_based_on_sequence_length(
+                    self.max_sequence_length)
+
+        return melodies
 
     def _initialize_restrictor(self):
         if self.range_type == 'guitar':
@@ -34,6 +53,8 @@ class Loader:
             self.restrictor = RangeRestrictor()
 
     def _restrict_melodies(self):
+        raise NotImplementedError
+
         modified_melodies = []
         for melody in self.melodies:
             modified_melodies.append(self.restrictor.restrict(melody))
@@ -123,13 +144,10 @@ class FeatureManager:
     def get_number_samples(self):
         return self.data.shape[0]
 
+
 class Dataset:
     def __init__(self,
-                 tokens: np.ndarray,
-                 classes: np.ndarray,
                  batch_size: int):
-        self.tokens = tokens
-        self.classes = classes
         self.batch_size = batch_size
 
     def num_classes(self):
@@ -144,13 +162,11 @@ class Dataset:
 
 class ToyData(Dataset):
     def __init__(self,
-                 tokens: np.ndarray,
-                 classes: np.ndarray,
                  batch_size: int):
-        super(ToyData, self).__init__(tokens, classes, batch_size)
+        super(ToyData, self).__init__(batch_size)
         self.tokens = tf.constant([[1, 2, 3, 0, 0],
                                    [2, 3, 4, 0, 0]])
-        self.classes = tf.constant([1,2])
+        self.classes = tf.constant([1, 2])
         self.batch_size = 1
 
     def num_classes(self):
@@ -160,7 +176,73 @@ class ToyData(Dataset):
         return 5
 
     def __iter__(self):
-        ds = tf.data.Dataset.from_tensor_slices((self.tokens, self.classes)).batch(self.batch_size)
+        ds = tf.data.Dataset.from_tensor_slices(
+            (self.tokens, self.classes)).batch(
+            self.batch_size)
         for tokens, classes in ds:
             yield tokens, classes
 
+
+class MelodyDataset(Dataset):
+    def __init__(self,
+                 batch_size: int,
+                 melodies: Dict[str, List[Melody]]):
+        super().__init__(batch_size)
+        self.mask_offset = 1
+
+        # sort melodies by class
+        self.melodies = dict(sorted(melodies.items(), key=lambda x: x[0]))
+        self.n_classes = len(self.melodies)
+
+        self.n_melodies = sum([len(m) for m in self.melodies.values()])
+
+        max_seq_lens = []
+        for melodies in self.melodies.values():
+            max_seq_lens += [max([len(x.notes) for x in melodies])]
+        self.max_sequence_length = max(max_seq_lens)
+
+        self._get_class_arrays()
+        self._get_token_arrays()
+
+        self.ds = tf.data.Dataset.from_tensor_slices(
+            (self.tokens, self.classes)).shuffle(1000).batch(
+            self.batch_size)
+
+    def num_classes(self):
+        return self.n_classes + self.mask_offset
+
+    def num_tokens(self):
+        return N_FEATURES_WITH_SILENCE + self.mask_offset
+
+    def _get_class_arrays(self):
+        # +1 due to masking
+        arrays = [
+            np.full(
+                shape=(
+                    len(melodies),
+                ),
+                fill_value=i +
+                self.mask_offset) for i,
+            melodies in enumerate(
+                self.melodies.values())]
+        arrays_concat = np.concatenate(arrays, axis=0)
+        self.classes = tf.convert_to_tensor(arrays_concat)
+
+    def _get_token_arrays(self):
+
+        arrays = []
+        for melodies in self.melodies.values():
+            a = np.zeros((len(melodies), self.max_sequence_length))
+            for i, melody in enumerate(melodies):
+                # +1 due to masking
+                a[i, :len(melody.notes)] = np.array(
+                    [n.get_midi_index() + self.mask_offset for n in melody.notes])
+
+            arrays.append(a)
+
+        arrays_concat = np.concatenate(arrays, axis=0)
+        self.tokens = tf.convert_to_tensor(arrays_concat)
+
+    def __iter__(self):
+        for tokens, classes in self.ds:
+            yield tokens, classes

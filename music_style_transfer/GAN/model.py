@@ -1,5 +1,5 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Embedding, LSTM, Dense
+from tensorflow.keras.layers import Embedding, RNN, LSTMCell, Dense
 tf.enable_eager_execution()
 tfe = tf.contrib.eager
 
@@ -7,10 +7,8 @@ tfe = tf.contrib.eager
 class TransformerConfig:
     def __init__(self,
                  n_layers: int,
-                 model_dim: int,
                  hidden_dim: int):
         self.n_layers = n_layers
-        self.model_dim = model_dim
         self.hidden_dim = hidden_dim
 
 
@@ -27,7 +25,7 @@ class EmbeddingConfig:
 class OutputLayerConfig:
     def __init__(self,
                  output_dim: int,
-                 softmax: bool=True):
+                 softmax: bool = True):
         self.output_dim = output_dim
         self.softmax = softmax
 
@@ -52,8 +50,9 @@ class Generator(tf.keras.Model):
         super(Generator, self).__init__()
         self.config = config
 
-        self.encoder = LSTM(
+        self.encoder = RNN([LSTMCell(
             units=config.encoder_config.hidden_dim,
+        ) for _ in range(config.encoder_config.n_layers)],
             return_sequences=True
         )
 
@@ -112,7 +111,10 @@ class Generator(tf.keras.Model):
 
         # project the encoder outputs to the respective class vocabulary sizes
         token_output = tf.nn.softmax(self.output_layer(token_emb))
-        class_output = tf.nn.softmax(tf.squeeze(self.class_output_layer(class_emb), axis=1))
+        class_output = tf.nn.softmax(
+            tf.squeeze(
+                self.class_output_layer(class_emb),
+                axis=1))
 
         return token_output, class_output
 
@@ -123,8 +125,9 @@ class Discriminator(tf.keras.Model):
         super(Discriminator, self).__init__()
         self.config = config
 
-        self.encoder = LSTM(
+        self.encoder = RNN([LSTMCell(
             units=config.encoder_config.hidden_dim,
+        ) for _ in range(config.encoder_config.n_layers)],
             return_sequences=True
         )
 
@@ -153,13 +156,15 @@ class Discriminator(tf.keras.Model):
         """
 
         [source_tokens, conditional_class] = inputs
-        conditional_class, source_tokens = self._convert_input_to_one_hot(conditional_class, source_tokens)
+        conditional_class, source_tokens = self._convert_input_to_one_hot(
+            conditional_class, source_tokens)
 
         # get the embeddings for the source tokens and conditional class
         # shape: (batch_size, seq_len, h_dim)
         source_emb = self.embeddings(source_tokens)
         # shape: (batch_size, 1, h_dim)
-        class_emb = tf.expand_dims(self.class_embeddings(conditional_class), axis=1)
+        class_emb = tf.expand_dims(
+            self.class_embeddings(conditional_class), axis=1)
 
         # place the class embedding in the first position
         encoder_input = tf.concat([class_emb, source_emb], axis=1)
@@ -179,16 +184,20 @@ class Discriminator(tf.keras.Model):
         return encoder_output
 
     def _convert_input_to_one_hot(self, conditional_class, source_tokens):
+
         if tf.shape(source_tokens).shape == 2:
-            source_tokens = tf.one_hot(source_tokens,
-                                       depth=self.config.embedding_config.input_dim,
-                                       on_value=1.,
-                                       off_value=0.)
+            source_tokens = tf.one_hot(
+                tf.cast(source_tokens, 'int32'),
+                depth=self.config.embedding_config.input_dim,
+                on_value=1.,
+                off_value=0.)
+
         if tf.shape(conditional_class).shape == 1:
-            conditional_class = tf.one_hot(conditional_class,
-                                           depth=self.config.conditional_class_config.input_dim,
-                                           on_value=1.,
-                                           off_value=0.)
+            conditional_class = tf.one_hot(
+                tf.cast(conditional_class, 'int32'),
+                depth=self.config.conditional_class_config.input_dim,
+                on_value=1.,
+                off_value=0.)
         return conditional_class, source_tokens
 
 
@@ -203,9 +212,7 @@ def discriminator_loss(real_output, generated_output):
         multi_class_labels=tf.zeros_like(generated_output),
         logits=generated_output)
 
-    total_loss = real_loss + generated_loss
-
-    return total_loss
+    return real_loss + generated_loss
 
 
 def generator_loss(generated_output):

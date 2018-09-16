@@ -4,7 +4,7 @@ import midi
 
 class MelodyWriter:
     def __init__(self):
-        self.tempo = DEFAULT_TEMPO
+        self.tempo = DEFAULT_BPM
 
     def get_midi_pitch(self, note):
         return note.octave * N_PITCHES + note.pitch
@@ -12,20 +12,29 @@ class MelodyWriter:
     def write_to_file(
             self,
             file_name,
-            melody,
-            tick_step_size=DEF_TICK_STEP_SIZE):
+            melody):
         pattern = midi.Pattern()
-        pattern.resolution = melody.tempo
+        pattern.resolution = melody.resolution
 
         track = midi.Track()
+        track.append(self._create_bpm_event(melody))
 
+        self._write_track(
+            melody, int(
+                melody.resolution / melody.slices_per_quarter), track)
+
+        eot = midi.EndOfTrackEvent(tick=1)
+        track.append(eot)
+
+        pattern.append(track)
+        midi.write_midifile(file_name, pattern)
+
+    def _write_track(self, melody, tick_step_size, track):
         notes = melody.notes
-
         next_tick_start = 0
         i = 0
         while i < len(notes):
             note = notes[i]
-
             if note.pitch != SILENCE and not note.articulated:
                 pitch = self.get_midi_pitch(note)
                 on = midi.NoteOnEvent(
@@ -56,8 +65,7 @@ class MelodyWriter:
 
             i += 1
 
-        eot = midi.EndOfTrackEvent(tick=1)
-        track.append(eot)
-
-        pattern.append(track)
-        midi.write_midifile(file_name, pattern)
+    def _create_bpm_event(self, melody):
+        bpm_event = midi.SetTempoEvent()
+        bpm_event.set_bpm(melody.bpm)
+        return bpm_event

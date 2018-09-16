@@ -1,39 +1,38 @@
-from .MIDIReader import MIDIReader
-from .MelodyWriter import MelodyWriter
-from .Melody import Melody
+from music_style_transfer.MIDIUtil.MIDIReader import MIDIReader
+from music_style_transfer.MIDIUtil.MelodyWriter import MelodyWriter
+from music_style_transfer.MIDIUtil.Melody import Melody
 
 
-class MIDISplitter:
-    def __init__(self):
-        self.midi_reader = MIDIReader()
-        self.melody_writer = MelodyWriter()
+def read_and_write(reader: MIDIReader,
+                   writer: MelodyWriter,
+                   fname: str,
+                   output_prefix: str):
+    print("Reading file {}".format(fname))
+    melodies = reader.read_file(fname)
 
-    def read_and_write(self,
-                       input: str,
-                       output_prefix: str):
-        melodies = self.midi_reader.read_file(input)[0]
+    for melody in melodies:
+        out_fname = append_melody_description(fname,
+                                              output_prefix,
+                                              melody)
 
-        for melody in melodies:
-            output_file = self.append_melody_description(input,
-                                                         output_prefix,
-                                                         melody)
+        print(
+            "Writing file {}  Length {}".format(
+                out_fname, len(
+                    melody.notes)))
+        writer.write_to_file(out_fname, melody)
 
-            self.melody_writer.write_to_file(output_file,
-                                             melody)
 
-    def append_melody_description(self,
-                                  input: str,
-                                  prefix: str,
-                                  melody: Melody):
-        res = prefix
-        # Get the file name from a possible sequence of folders
-        midi_file_name = input.split('/')[-1]
-        midi_file_name = midi_file_name.split('.mid')[0]  # Remove the ".mid"
+def append_melody_description(input: str,
+                              prefix: str,
+                              melody: Melody):
+    res = prefix
+    # Get the file name from a possible sequence of folders
+    midi_file_name = input.split('/')[-1]
+    midi_file_name = midi_file_name.split('.mid')[0]  # Remove the ".mid"
 
-        res += midi_file_name + "_" + melody.description + ".mid"
-        res = res.replace(' ', '-')  # Replace all whitespaces with hyphens
-
-        return res
+    res += midi_file_name + "_" + melody.description + ".mid"
+    res = res.replace(' ', '-')  # Replace all whitespaces with hyphens
+    return res
 
 
 if __name__ == '__main__':
@@ -45,13 +44,20 @@ if __name__ == '__main__':
                         help="directory path with midi files to read from")
     parser.add_argument("output", type=str,
                         help="output path for the split midi files")
+    parser.add_argument(
+        "--slices-per-quarter",
+        type=float,
+        default=4,
+        help="how many notes should be created for a quarter note. \n"
+        " Default: 4 (corresponds to 16th notes")
 
     args = parser.parse_args()
 
-    midi_splitter = MIDISplitter()
+    reader = MIDIReader(args.slices_per_quarter)
+    writer = MelodyWriter()
 
     input_folder = args.input
     output_folder = args.output
 
     for file_name in glob.glob(input_folder + "/*.mid"):
-        midi_splitter.read_and_write(file_name, output_folder)
+        read_and_write(reader, writer, file_name, output_folder)

@@ -2,6 +2,7 @@ import tensorflow as tf
 
 from . import model
 
+
 class OptimizerConfig:
     def __init__(self,
                  optimizer: str,
@@ -18,6 +19,35 @@ class TrainConfig:
         self.batch_size = batch_size
         self.g_optimizer = g_optimizer
         self.d_optimizer = d_optimizer
+
+
+from music_style_transfer.MIDIUtil.MelodyWriter import MelodyWriter
+from music_style_transfer.MIDIUtil.Melody import Melody
+from music_style_transfer.MIDIUtil.Note import Note
+
+
+def reconstruct_melody_from_notes(notes, mask_offset=1):
+    melody = Melody()
+    melody.notes = [Note(midi_pitch=val - mask_offset) for val in notes]
+    return melody
+
+
+def generate_melodies(original_melody,
+                      num_classes,
+                      output_path,
+                      generator):
+    writer = MelodyWriter()
+
+    mel_notes = []
+    for c in range(1, num_classes):
+        generated = generator([original_melody, tf.constant([c])])[0]
+        mel_notes += [tf.argmax(generated, axis=2).numpy().ravel()]
+
+    for i, notes in enumerate(mel_notes):
+        print(notes)
+        melody = reconstruct_melody_from_notes(notes.tolist())
+        writer.write_to_file(output_path + '_{}.mid'.format(i),
+                             melody)
 
 
 class Trainer:
@@ -48,7 +78,10 @@ class Trainer:
         else:
             raise NotImplementedError
 
-    def fit(self, dataset, epochs=10):
+    def fit(self,
+            dataset,
+            epochs=10,
+            samples_output_path: str = None):
 
         n_batches = 0
 
@@ -78,8 +111,13 @@ class Trainer:
                     disc_loss, self.discriminator.variables)
 
                 self.g_optimizer.apply_gradients(
-                    zip(gradients_of_generator,  self.generator.variables))
+                    zip(gradients_of_generator, self.generator.variables))
                 self.d_optimizer.apply_gradients(
                     zip(gradients_of_discriminator, self.discriminator.variables))
 
                 n_batches += 1
+                if n_batches % 100 == 0 and samples_output_path is not None:
+                    generate_melodies(tf.expand_dims(tokens[0, :], axis=0),
+                                      dataset.num_classes(),
+                                      output_path='{}/generated-step-{}'.format(samples_output_path, n_batches),
+                                      generator=self.generator)
