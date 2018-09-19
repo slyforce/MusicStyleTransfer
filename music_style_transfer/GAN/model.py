@@ -1,10 +1,9 @@
-import tensorflow as tf
-from tensorflow.keras.layers import Embedding, RNN, LSTMCell, Dense
-tf.enable_eager_execution()
-tfe = tf.contrib.eager
+import mxnet as mx
+from mxnet.gluon.rnn import LSTM
+from mxnet.gluon.nn import Dense, Embedding
 
 
-class TransformerConfig:
+class EncoderConfig:
     def __init__(self,
                  n_layers: int,
                  hidden_dim: int):
@@ -32,7 +31,7 @@ class OutputLayerConfig:
 
 class ModelConfig:
     def __init__(self,
-                 encoder_config: TransformerConfig,
+                 encoder_config: EncoderConfig,
                  embedding_config: EmbeddingConfig,
                  conditional_class_config: EmbeddingConfig,
                  output_layer_config: OutputLayerConfig,
@@ -44,177 +43,163 @@ class ModelConfig:
         self.class_output_layer_config = class_output_layer_config
 
 
-class Generator(tf.keras.Model):
+class Generator(mx.gluon.HybridBlock):
     def __init__(self,
-                 config: ModelConfig):
-        super(Generator, self).__init__()
+                 config: ModelConfig,
+                 **kwargs):
+        super(Generator, self).__init__(**kwargs)
         self.config = config
 
-        self.encoder = RNN([LSTMCell(
-            units=config.encoder_config.hidden_dim,
-        ) for _ in range(config.encoder_config.n_layers)],
-            return_sequences=True
-        )
+        with self.name_scope():
+            self.encoder = LSTM(config.encoder_config.hidden_dim,
+                                config.encoder_config.n_layers,
+                                dropout=0.0,
+                                input_size=self.config.embedding_config.hidden_dim)
 
-        self.embeddings = Embedding(
-            input_dim=self.config.embedding_config.input_dim,
-            output_dim=self.config.embedding_config.hidden_dim,
-            mask_zero=self.config.embedding_config.mask_zero
-        )
+            self.embeddings = Embedding(
+                input_dim=self.config.embedding_config.input_dim,
+                output_dim=self.config.embedding_config.hidden_dim,
+            )
 
-        self.class_embeddings = Embedding(
-            input_dim=self.config.conditional_class_config.input_dim,
-            output_dim=self.config.conditional_class_config.hidden_dim,
-            mask_zero=self.config.conditional_class_config.mask_zero
-        )
+            self.class_embeddings = Embedding(
+                input_dim=self.config.conditional_class_config.input_dim,
+                output_dim=self.config.conditional_class_config.hidden_dim,
+            )
 
-        self.output_layer = Dense(
-            units=self.config.output_layer_config.output_dim
-        )
+            self.output_layer = Dense(
+                in_units=config.encoder_config.hidden_dim,
+                units=self.config.output_layer_config.output_dim,
+                flatten=False
+            )
 
-        self.class_output_layer = Dense(
-            units=self.config.class_output_layer_config.output_dim
-        )
+            self.class_output_layer = Dense(
+                in_units=config.encoder_config.hidden_dim,
+                units=self.config.class_output_layer_config.output_dim,
+                flatten=False
+            )
 
-    def call(self, inputs, training=True, mask=None):
+    def hybrid_forward(self, F, tokens, classes):
         """
         inputs is a list of values
-         - source tokens: the tokengss being fed into the encoder (batch_size, max_sequence_len)
-         - sequence length: length of the input sequence (batch_size)
+         - source tokens: the tokens being fed into the encoder (batch_size, max_sequence_len)
          - conditional class: start token for the decoder sequence (batch_size)
+         - sequence length: length of the input sequence (batch_size)
         :param inputs:
         :param training:
         :param mask:
         :return:
         """
-        [source_tokens, conditional_class] = inputs
 
         # get the embeddings for the source tokens and conditional class
         # shape: (batch_size, seq_len, h_dim)
-        source_emb = self.embeddings(source_tokens)
+        source_emb = self.embeddings.forward(tokens)
         # shape: (batch_size, h_dim)
-        class_emb = self.class_embeddings(conditional_class)
+        class_emb = self.class_embeddings.forward(classes)
 
         # shape: (batch_size, 1, h_dim)
-        class_emb = tf.expand_dims(class_emb, axis=1)
+        class_emb = F.expand_dims(class_emb, axis=1)
 
         # place the class embedding in the first position
-        encoder_input = tf.concat([source_emb, class_emb], 1)
+        encoder_input = F.concat(source_emb, class_emb, dim=1)
 
         # call encoder on the sequence to generate a sequence of encoded tokens
         # of the same length
-        encoder_output = self.encoder(encoder_input)
+        encoder_output = self.encoder.forward(encoder_input)
 
         # separate class token and embeddings
-        class_emb = tf.slice(encoder_output, [0, 0, 0], [-1, 1, -1])
-        token_emb = tf.slice(encoder_output, [0, 1, 0], [-1, -1, -1])
+        class_emb = F.slice_axis(encoder_output, axis=1, begin=0, end=1)
+        token_emb = F.slice_axis(encoder_output, axis=1, begin=1, end=None)
 
         # project the encoder outputs to the respective class vocabulary sizes
-        token_output = tf.nn.softmax(self.output_layer(token_emb))
-        class_output = tf.nn.softmax(
-            tf.squeeze(
-                self.class_output_layer(class_emb),
-                axis=1))
+        token_output = F.softmax(self.output_layer.forward(token_emb))
+        class_output = F.squeeze(F.softmax(self.class_output_layer.forward(class_emb)))
 
         return token_output, class_output
 
 
-class Discriminator(tf.keras.Model):
+class Discriminator(mx.gluon.HybridBlock):
     def __init__(self,
                  config: ModelConfig):
         super(Discriminator, self).__init__()
         self.config = config
+        with self.name_scope():
+            self.encoder = LSTM(config.encoder_config.hidden_dim,
+                                config.encoder_config.n_layers,
+                                dropout=0.0,
+                                input_size=self.config.embedding_config.hidden_dim)
 
-        self.encoder = RNN([LSTMCell(
-            units=config.encoder_config.hidden_dim,
-        ) for _ in range(config.encoder_config.n_layers)],
-            return_sequences=True
-        )
+            self.embeddings = Dense(
+                in_units=self.config.embedding_config.input_dim,
+                units=self.config.embedding_config.hidden_dim,
+                flatten=False
+            )
 
-        self.embeddings = Dense(
-            units=self.config.embedding_config.hidden_dim
-        )
+            self.class_embeddings = Dense(
+                in_units=self.config.conditional_class_config.input_dim,
+                units=self.config.conditional_class_config.hidden_dim,
+                flatten=False
+            )
 
-        self.class_embeddings = Dense(
-            units=self.config.conditional_class_config.hidden_dim
-        )
+            self.output_layer = Dense(
+                in_units=config.encoder_config.hidden_dim,
+                units=self.config.output_layer_config.output_dim,
+                flatten=False
+            )
 
-        self.output_layer = Dense(
-            units=self.config.output_layer_config.output_dim
-        )
 
-    def call(self, inputs, training=True, mask=None):
+    def hybrid_forward(self, F, tokens, classes, seq_lens):
         """
         inputs is a list of values
-         - source tokens: the tokengss being fed into the encoder (batch_size, max_sequence_len)
-         - sequence length: length of the input sequence (batch_size)
+         - source tokens: the tokens being fed into the encoder (batch_size, max_sequence_len)
          - conditional class: start token for the decoder sequence (batch_size)
-        :param inputs:
-        :param training:
-        :param mask:
-        :return:
         """
-
-        [source_tokens, conditional_class] = inputs
-        conditional_class, source_tokens = self._convert_input_to_one_hot(
-            conditional_class, source_tokens)
 
         # get the embeddings for the source tokens and conditional class
         # shape: (batch_size, seq_len, h_dim)
-        source_emb = self.embeddings(source_tokens)
+        source_emb = self.embeddings.forward(tokens)
         # shape: (batch_size, 1, h_dim)
-        class_emb = tf.expand_dims(
-            self.class_embeddings(conditional_class), axis=1)
+        class_emb = F.expand_dims(
+            self.class_embeddings.forward(classes), axis=1)
 
         # place the class embedding in the first position
-        encoder_input = tf.concat([class_emb, source_emb], axis=1)
+        encoder_input = F.concat(class_emb, source_emb, dim=1)
 
         # call encoder on the sequence to generate a sequence of encoded tokens
         # of the same length
-        encoder_output = self.encoder(encoder_input)
+        encoder_output = self.encoder.forward(encoder_input)
+
+        # mask the values at this point
+        # set to a large negative value
+        encoder_output = F.SequenceMask(encoder_output,
+                                        axis=1,
+                                        sequence_length=seq_lens,
+                                        use_sequence_length=True,
+                                        value=-10000.)
+
 
         # take the maximum values over the time axis
         # shape (batch_size, hidden_dim)
-        encoder_output = tf.reduce_max(encoder_output, axis=1)
+        encoder_output = F.max(encoder_output, axis=1)
 
         # project to a scalar
         # shape (batch_size, 1)
-        encoder_output = self.output_layer(encoder_output)
+        encoder_output = F.sigmoid(self.output_layer.forward(encoder_output))
 
         return encoder_output
 
-    def _convert_input_to_one_hot(self, conditional_class, source_tokens):
+    def convert_to_one_hot(self, source_tokens, conditional_class):
 
-        if tf.shape(source_tokens).shape == 2:
-            source_tokens = tf.one_hot(
-                tf.cast(source_tokens, 'int32'),
-                depth=self.config.embedding_config.input_dim,
-                on_value=1.,
-                off_value=0.)
+        source_tokens = mx.nd.one_hot(
+            mx.nd.cast(source_tokens, 'int32'),
+            depth=self.config.embedding_config.input_dim,
+            on_value=1.,
+            off_value=0.)
 
-        if tf.shape(conditional_class).shape == 1:
-            conditional_class = tf.one_hot(
-                tf.cast(conditional_class, 'int32'),
-                depth=self.config.conditional_class_config.input_dim,
-                on_value=1.,
-                off_value=0.)
-        return conditional_class, source_tokens
+        conditional_class = mx.nd.one_hot(
+            mx.nd.cast(conditional_class, 'int32'),
+            depth=self.config.conditional_class_config.input_dim,
+            on_value=1.,
+            off_value=0.)
 
+        return source_tokens, conditional_class
 
-def discriminator_loss(real_output, generated_output):
-    # [1,1,...,1] with real output since it is true and we want
-    # our generated examples to look like it
-    real_loss = tf.losses.sigmoid_cross_entropy(
-        multi_class_labels=tf.ones_like(real_output), logits=real_output)
-
-    # [0,0,...,0] with generated images since they are fake
-    generated_loss = tf.losses.sigmoid_cross_entropy(
-        multi_class_labels=tf.zeros_like(generated_output),
-        logits=generated_output)
-
-    return real_loss + generated_loss
-
-
-def generator_loss(generated_output):
-    return tf.losses.sigmoid_cross_entropy(
-        tf.ones_like(generated_output), generated_output)

@@ -1,5 +1,5 @@
 import numpy as np
-import tensorflow as tf
+import mxnet as mx
 
 from ..MIDIUtil.defaults import *
 from ..MIDIUtil.MIDIReader import MIDIReader
@@ -164,11 +164,11 @@ class ToyData(Dataset):
     def __init__(self,
                  batch_size: int):
         super(ToyData, self).__init__(batch_size)
-        self.tokens = tf.constant([[1, 2, 3, 0, 0],
-                                   [2, 3, 4, 0, 0]])
-        self.classes = tf.constant([1, 2])
-        self.batch_size = 1
-
+        self.batch_size = 2
+        self.iter = mx.io.NDArrayIter({'data0': mx.nd.array([[1, 2, 3, 0, 0],
+                                                              [2, 3, 4, 0, 0]]),
+                                        'data1': mx.nd.array([1,2])},
+                                         batch_size=self.batch_size, shuffle=False)
     def num_classes(self):
         return 3
 
@@ -176,11 +176,9 @@ class ToyData(Dataset):
         return 5
 
     def __iter__(self):
-        ds = tf.data.Dataset.from_tensor_slices(
-            (self.tokens, self.classes)).batch(
-            self.batch_size)
-        for tokens, classes in ds:
-            yield tokens, classes
+        self.iter.reset()
+        for batch in self.iter:
+            yield batch
 
 
 class MelodyDataset(Dataset):

@@ -3,12 +3,11 @@ from music_style_transfer.GAN import model
 from music_style_transfer.GAN import trainer
 from .config import get_config
 import os
-import tensorflow as tf
-
+import mxnet as mx
 
 def create_toy_model_configs(data):
     generator_config = model.ModelConfig(
-        encoder_config=model.TransformerConfig(
+        encoder_config=model.EncoderConfig(
             n_layers=1,
             hidden_dim=4),
         embedding_config=model.EmbeddingConfig(
@@ -26,7 +25,7 @@ def create_toy_model_configs(data):
     )
 
     discriminator_config = model.ModelConfig(
-        encoder_config=model.TransformerConfig(
+        encoder_config=model.EncoderConfig(
             n_layers=1,
             hidden_dim=4),
         embedding_config=model.EmbeddingConfig(
@@ -49,7 +48,7 @@ def create_toy_model_configs(data):
 def create_toy_train_config():
     config = trainer.TrainConfig(batch_size=1,
                                  d_optimizer=trainer.OptimizerConfig(
-                                     learning_rate=0.,
+                                     learning_rate=0.01,
                                      optimizer='adam'
                                  ),
                                  g_optimizer=trainer.OptimizerConfig(
@@ -74,7 +73,7 @@ def create_train_config(args):
 
 def create_model_configs(args, dataset: Dataset):
     generator_config = model.ModelConfig(
-        encoder_config=model.TransformerConfig(
+        encoder_config=model.EncoderConfig(
             n_layers=args.g_n_layers,
             hidden_dim=args.g_rnn_hidden_dim),
         embedding_config=model.EmbeddingConfig(
@@ -92,7 +91,7 @@ def create_model_configs(args, dataset: Dataset):
     )
 
     discriminator_config = model.ModelConfig(
-        encoder_config=model.TransformerConfig(
+        encoder_config=model.EncoderConfig(
             n_layers=args.d_n_layers,
             hidden_dim=args.d_rnn_hidden_dim),
         embedding_config=model.EmbeddingConfig(
@@ -121,12 +120,12 @@ def main_toy():
     discriminator = model.Discriminator(config=d_config)
 
     t = trainer.Trainer(config=create_toy_train_config(),
+                        context=mx.cpu(),
                         generator=generator,
                         discriminator=discriminator)
 
     t.fit(dataset=dataset,
-          epochs=2)
-
+          epochs=2000)
 
 def main():
     args = get_config()
@@ -149,21 +148,16 @@ def main():
     discriminator = model.Discriminator(config=d_config)
 
     t = trainer.Trainer(config=create_train_config(args),
+                        context=mx.gpu() if args.gpu else mx.cpu(),
                         generator=generator,
                         discriminator=discriminator)
 
-    if args.gpu:
-        device = '/gpu:0'
-    else:
-        device = '/cpu:0'
-
-    with tf.device(device):
-        t.fit(dataset=dataset,
-              epochs=200,
-              samples_output_path=args.out_samples)
+    t.fit(dataset=dataset,
+          epochs=200,
+          samples_output_path=args.out_samples)
 
 
 if __name__ == '__main__':
-    # main_toy()
-    # exit(0)
+    main_toy()
+    exit(0)
     main()
