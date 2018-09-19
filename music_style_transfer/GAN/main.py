@@ -9,7 +9,7 @@ def create_toy_model_configs(data):
     generator_config = model.ModelConfig(
         encoder_config=model.EncoderConfig(
             n_layers=1,
-            hidden_dim=4),
+            hidden_dim=16),
         embedding_config=model.EmbeddingConfig(
             input_dim=data.num_tokens(),
             hidden_dim=4,
@@ -27,7 +27,7 @@ def create_toy_model_configs(data):
     discriminator_config = model.ModelConfig(
         encoder_config=model.EncoderConfig(
             n_layers=1,
-            hidden_dim=4),
+            hidden_dim=16),
         embedding_config=model.EmbeddingConfig(
             input_dim=data.num_tokens(),
             hidden_dim=4,
@@ -47,12 +47,15 @@ def create_toy_model_configs(data):
 
 def create_toy_train_config():
     config = trainer.TrainConfig(batch_size=1,
+                                 discriminator_update_steps=1,
+                                 sampling_frequency=100,
+                                 d_label_smoothing=0.1,
                                  d_optimizer=trainer.OptimizerConfig(
                                      learning_rate=0.01,
                                      optimizer='adam'
                                  ),
                                  g_optimizer=trainer.OptimizerConfig(
-                                     learning_rate=0.,
+                                     learning_rate=0.01,
                                      optimizer='adam'
                                  ))
     return config
@@ -60,6 +63,9 @@ def create_toy_train_config():
 
 def create_train_config(args):
     config = trainer.TrainConfig(batch_size=args.batch_size,
+                                 discriminator_update_steps=args.discriminator_update_steps,
+                                 sampling_frequency=args.sampling_frequency,
+                                 d_label_smoothing=args.label_smoothing,
                                  d_optimizer=trainer.OptimizerConfig(
                                      learning_rate=args.d_learning_rate,
                                      optimizer='adam'
@@ -130,6 +136,10 @@ def main_toy():
 def main():
     args = get_config()
 
+    if args.toy:
+        main_toy()
+        exit(0)
+
     loader = Loader(path=args.data,
                     max_sequence_length=args.max_seq_len,
                     slices_per_quarter_note=args.slices_per_quarter_note)
@@ -138,9 +148,8 @@ def main():
         melodies=loader.melodies,
         batch_size=args.batch_size)
 
-    if args.out_samples is not None:
-        if not os.stat(args.out_samples):
-            os.mkdir(args.out_samples)
+    if not os.path.exists(args.out_samples):
+        os.makedirs(args.out_samples)
 
     g_config, d_config = create_model_configs(args, dataset)
 
@@ -153,11 +162,11 @@ def main():
                         discriminator=discriminator)
 
     t.fit(dataset=dataset,
-          epochs=200,
+          epochs=args.epochs,
           samples_output_path=args.out_samples)
 
 
 if __name__ == '__main__':
-    main_toy()
-    exit(0)
+    #main_toy()
+    #exit(0)
     main()

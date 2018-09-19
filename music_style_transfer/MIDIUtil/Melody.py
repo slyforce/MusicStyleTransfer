@@ -32,8 +32,13 @@ class Melody:
             # append the current note to the most-recent melody
             result[-1].notes.append(self.notes[i])
 
-        # all melodies should have at least one note
+        # at least one melody should have been produced
         assert(len(result) != 0)
+
+        for i in reversed(range(len(result))):
+            if all([note.is_silence() for note in result[i].notes]):
+                # all notes are silence
+                result.pop(i)
 
         return result
 

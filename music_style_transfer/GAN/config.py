@@ -36,22 +36,25 @@ data_arg.add_argument('--data', type=str, default='data')
 # Training / test parameters
 train_arg = add_argument_group('Training')
 train_arg.add_argument('--optimizer', type=str, default='adam')
-train_arg.add_argument('--max_step', type=int, default=500000)
+train_arg.add_argument('--epochs', type=int, default=5000)
 train_arg.add_argument('--beta1', type=float, default=0.5)
 train_arg.add_argument('--beta2', type=float, default=0.999)
 train_arg.add_argument('--use_gpu', type=str2bool, default=True)
 train_arg.add_argument('--g-learning-rate', type=float, default=3e-4)
 train_arg.add_argument('--d-learning-rate', type=float, default=3e-4)
+train_arg.add_argument('--discriminator-update-steps', type=int, default=1)
+train_arg.add_argument('--label-smoothing', type=float, default=0.1)
 
 # Misc
 misc_arg = add_argument_group('Misc')
 misc_arg.add_argument('--load-from', type=str, default='')
 misc_arg.add_argument('--log-step', type=int, default=200)
 misc_arg.add_argument('--checkpoint-frequency', type=int, default=5000)
+misc_arg.add_argument('--sampling-frequency', type=int, default=1000)
 misc_arg.add_argument('--out-samples', type=str, default=None)
 misc_arg.add_argument('--model-output', type=str, default='models')
 misc_arg.add_argument('--gpu', action='store_true')
-
+misc_arg.add_argument('--toy', action='store_true')
 
 def get_config():
     config, unparsed = parser.parse_known_args()

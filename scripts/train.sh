@@ -8,11 +8,15 @@ python -m music_style_transfer.GAN.main \
 --max-seq-len 64 \
 --slices-per-quarter-note 4 \
 --data ~/src/MusicStyleTransfer/work/data/guitar_bass \
---checkpoint-frequency 1000 \
+--sampling-frequency 1000 \
+--epochs 10000 \
+--discriminator-update-steps 2 \
 --model-output test/ \
+--g-learning-rate 0.0003 \
 --g-n-layers 1 \
---g-rnn-hidden-dim 256 \
+--g-rnn-hidden-dim 128 \
 --g-emb-hidden-dim 64 \
+--d-learning-rate 0.00005 \
 --d-n-layers 1 \
---d-rnn-hidden-dim 256 \
---d-emb-hidden-dim 64 
+--d-rnn-hidden-dim 128 \
+--d-emb-hidden-dim 64 --toy --gpu 

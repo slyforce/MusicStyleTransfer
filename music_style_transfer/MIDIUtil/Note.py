@@ -55,6 +55,9 @@ class Note:
         else:
             return midi.NOTE_NAMES[self.pitch] + "_" + str(self.octave)
 
+    def __repr__(self):
+        return self.__str__()
+
     def is_silence(self):
         return self.pitch == SILENCE
 

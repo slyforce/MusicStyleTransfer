@@ -51,9 +51,9 @@ class MIDIReader:
 
         note_window = int(resolution // self.slices_per_quarter_note)
 
-        print("File resolution: {}".format(resolution))
-        print("BPM: {}".format(bpm))
-        print("Ticks per time-step: {}".format(note_window))
+        #print("File resolution: {}".format(resolution))
+        #print("BPM: {}".format(bpm))
+        #print("Ticks per time-step: {}".format(note_window))
 
         for idx, track in enumerate(pattern):
             new_melody = Melody(

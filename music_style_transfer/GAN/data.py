@@ -34,14 +34,12 @@ class Loader:
         directories = next(os.walk(self.path))[1]
         for directory in directories:
             melodies[directory] = []
-            for fname in glob.glob(self.path + '/' + directory + "/*.mid"):
-                print("Reading {}".format(fname))
-
+            for n_files, fname in enumerate(glob.glob(self.path + '/' + directory + "/*.mid")):
                 melody = self.midi_reader.read_file(fname)[0]
-                print(melody)
                 melodies[directory] += melody.split_based_on_sequence_length(
                     self.max_sequence_length)
 
+            print("Read {} files from {}".format(n_files, directory))
         return melodies
 
     def _initialize_restrictor(self):
@@ -187,44 +185,50 @@ class MelodyDataset(Dataset):
                  melodies: Dict[str, List[Melody]]):
         super().__init__(batch_size)
         self.mask_offset = 1
+        self._initialize(melodies)
+        self._log_dataset()
 
+        # no need to keep these objects since we will only use the iterator
+        del self.melodies
+
+    def _initialize(self, melodies):
         # sort melodies by class
         self.melodies = dict(sorted(melodies.items(), key=lambda x: x[0]))
         self.n_classes = len(self.melodies)
-
         self.n_melodies = sum([len(m) for m in self.melodies.values()])
-
         max_seq_lens = []
         for melodies in self.melodies.values():
             max_seq_lens += [max([len(x.notes) for x in melodies])]
         self.max_sequence_length = max(max_seq_lens)
-
         self._get_class_arrays()
         self._get_token_arrays()
+        self.iter = mx.io.NDArrayIter({'data0': self.tokens,
+                                       'data1': self.classes},
+                                      batch_size=self.batch_size, shuffle=True)
 
-        self.ds = tf.data.Dataset.from_tensor_slices(
-            (self.tokens, self.classes)).shuffle(1000).batch(
-            self.batch_size)
+    def _log_dataset(self):
+        print("Tokens dataset shape {}".format(self.tokens.shape))
+        print("Classes dataset shape {}".format(self.classes.shape))
+        for c, m in self.melodies.items():
+            print("Class {} has {} melodies of maximum length {}".format(c, len(m), max([len(x.notes) for x in m])))
 
     def num_classes(self):
-        return self.n_classes + self.mask_offset
+        return self.n_classes
 
     def num_tokens(self):
         return N_FEATURES_WITH_SILENCE + self.mask_offset
 
     def _get_class_arrays(self):
-        # +1 due to masking
         arrays = [
             np.full(
                 shape=(
                     len(melodies),
                 ),
-                fill_value=i +
-                self.mask_offset) for i,
+                fill_value=i) for i,
             melodies in enumerate(
                 self.melodies.values())]
         arrays_concat = np.concatenate(arrays, axis=0)
-        self.classes = tf.convert_to_tensor(arrays_concat)
+        self.classes = mx.nd.array(arrays_concat)
 
     def _get_token_arrays(self):
 
@@ -239,8 +243,10 @@ class MelodyDataset(Dataset):
             arrays.append(a)
 
         arrays_concat = np.concatenate(arrays, axis=0)
-        self.tokens = tf.convert_to_tensor(arrays_concat)
+        self.tokens = mx.nd.array(arrays_concat)
 
     def __iter__(self):
-        for tokens, classes in self.ds:
-            yield tokens, classes
+        self.iter.reset()
+        for batch in self.iter:
+            yield batch
+

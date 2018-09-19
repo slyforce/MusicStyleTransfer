@@ -176,7 +176,6 @@ class Discriminator(mx.gluon.HybridBlock):
                                         use_sequence_length=True,
                                         value=-10000.)
 
-
         # take the maximum values over the time axis
         # shape (batch_size, hidden_dim)
         encoder_output = F.max(encoder_output, axis=1)
