@@ -162,16 +162,39 @@ class ToyData(Dataset):
     def __init__(self,
                  batch_size: int):
         super(ToyData, self).__init__(batch_size)
-        self.batch_size = 2
-        self.iter = mx.io.NDArrayIter({'data0': mx.nd.array([[1, 2, 3, 0, 0],
-                                                              [2, 3, 4, 0, 0]]),
-                                        'data1': mx.nd.array([1,2])},
+        self.batch_size = 3
+        self.iter = mx.io.NDArrayIter({'data0': mx.nd.array([[1, 2, 0, 0],
+                                                             [2, 3, 0, 0],
+                                                             [3, 4, 0, 0]]),
+                                        'data1': mx.nd.array([0,1,2])},
                                          batch_size=self.batch_size, shuffle=False)
     def num_classes(self):
         return 3
 
     def num_tokens(self):
         return 5
+
+    def __iter__(self):
+        self.iter.reset()
+        for batch in self.iter:
+            yield batch
+
+
+class ToyDataV2(Dataset):
+    def __init__(self,
+                 batch_size: int):
+        super(ToyDataV2, self).__init__(batch_size)
+        self.batch_size = 3
+        self.iter = mx.io.NDArrayIter({'data0': mx.nd.array([[1],
+                                                             [2],
+                                                             [3]]),
+                                       'data1': mx.nd.array([0,1,2])},
+                                        batch_size=self.batch_size, shuffle=False)
+    def num_classes(self):
+        return 3
+
+    def num_tokens(self):
+        return 4
 
     def __iter__(self):
         self.iter.reset()

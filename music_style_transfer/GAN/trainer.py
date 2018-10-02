@@ -1,19 +1,42 @@
+from mxboard import *
+
+from music_style_transfer.MIDIUtil.MelodyWriter import MelodyWriter
+from music_style_transfer.MIDIUtil.Melody import Melody
+from music_style_transfer.MIDIUtil.Note import Note
+
 import mxnet as mx
 from mxnet import gluon
 from mxnet import autograd
 from . import model
-from . import loss
+from . import data
 
 import numpy as np
 
 from time import time
+from typing import List
 
 class OptimizerConfig:
     def __init__(self,
                  optimizer: str,
+                 optimizer_params: str,
                  learning_rate: float):
         self.optimizer = optimizer
+        self.optimizer_params = optimizer_params
         self.learning_rate = learning_rate
+
+    def params_to_dict(self):
+        """
+         Turn strings in format key1:value1,key2:value2 to a dictionary.
+         Key-Value pairs with more than one delimiter are ignored.
+        """
+        out = {}
+        for key_val in self.optimizer_params.strip().split(','):
+            key_val = key_val.split(':')
+            if len(key_val) != 2.:
+                continue
+            out[str(key_val[0])] = float(key_val[1])
+
+        return out
 
 
 class TrainConfig:
@@ -32,37 +55,49 @@ class TrainConfig:
         self.d_optimizer = d_optimizer
 
 
-from music_style_transfer.MIDIUtil.MelodyWriter import MelodyWriter
-from music_style_transfer.MIDIUtil.Melody import Melody
-from music_style_transfer.MIDIUtil.Note import Note
-
-
-def reconstruct_melody_from_notes(notes, mask_offset=1):
+def construct_melody_from_integers(notes: List[int],
+                                   mask_offset: int=1):
+    """
+    Create a melody from a list of integers corresponding to midi pitches.
+    """
     melody = Melody()
-    melody.notes = [Note(midi_pitch=val - mask_offset) for val in notes]
+    melody.notes = [Note(midi_pitch=max(val-mask_offset, 0)) for val in notes]
     return melody
 
 
-def generate_melodies(original_melody,
-                      num_classes,
-                      output_path,
-                      generator,
-                      context):
+def generate_melodies(original_melody_nd: mx.nd.NDArray,
+                      num_classes: int,
+                      output_path: str,
+                      generator: model.Generator,
+                      context: mx.Context):
+    """
+    Transform a melody into a range of classes.
+    :param original_melody_nd: Pitches in mx.nd.NDArray format. Shape (1, seq_len)
+    :param num_classes: Iterate from 0 to this number (exclusive) and generate a melody for each class
+    :param output_path: Output path for the .mid files
+    :param generator: Generator model
+    :param context: Mxnet context
+    """
+
+    # create a writer object
     writer = MelodyWriter()
 
-    mel_notes = []
-    for c in range(1, num_classes):
-        generated = generator(original_melody, mx.nd.array([c], ctx=context))[0]
-        mel_notes += [mx.nd.argmax(generated, axis=2).asnumpy().ravel()]
+    pitches_per_class = []
+    for c in range(0, num_classes):
+        noise = generator.create_noise(original_melody_nd.shape)
+        generated = generator.forward(original_melody_nd, mx.nd.array([c], ctx=context), noise)
 
-    original_melody_object = reconstruct_melody_from_notes([int(x) for x in original_melody.asnumpy().ravel()])
-    print("Original melody: {}".format(original_melody_object.notes))
+        # take the maximum over all classes
+        pitches_per_class += [mx.nd.argmax(generated, axis=2).asnumpy().ravel()]
 
-    for i, notes in enumerate(mel_notes):
-        melody = reconstruct_melody_from_notes([int(x) for x in notes])
-        print("Melody for class {}: {}".format(i, melody.notes))
-        writer.write_to_file(output_path + '_{}.mid'.format(i+1),
-                             melody)
+    original_melody = construct_melody_from_integers([int(x) for x in original_melody_nd.asnumpy().ravel()])
+
+    print("Original melody: {}".format(original_melody.notes))
+    for class_index, pitches in enumerate(pitches_per_class):
+        melody = construct_melody_from_integers([int(x) for x in pitches])
+
+        print("Melody for class {}: {}".format(class_index, melody.notes))
+        writer.write_to_file(output_path + '_{}.mid'.format(class_index), melody)
 
 
 class Trainer:
@@ -79,26 +114,19 @@ class Trainer:
         self._initialize_models()
         self._initialize_optimizers()
         self._initialize_metrics()
-        self._initialize_losses()
 
-    def _initialize_losses(self):
-        self.g_loss = loss.BinaryCrossEntropy()
-        self.g_loss.hybridize()
-
-        self.d_loss = loss.BinaryCrossEntropy(label_smoothing=self.config.d_label_smoothing)
-        self.d_loss.hybridize()
+        self.summary_writer = SummaryWriter(logdir='/tmp/out', flush_secs=5)
 
     def _initialize_optimizers(self):
         # trainer for the generator and the discriminator
         self.g_optimizer = gluon.Trainer(self.generator.collect_params(),
                                          self.config.g_optimizer.optimizer,
-                                         {'learning_rate': self.config.g_optimizer.learning_rate})
+                                         {'learning_rate': self.config.g_optimizer.learning_rate}.update(self.config.d_optimizer.params_to_dict()))
         self.d_optimizer = gluon.Trainer(self.discriminator.collect_params(),
                                          self.config.d_optimizer.optimizer,
-                                         {'learning_rate': self.config.d_optimizer.learning_rate})
+                                         {'learning_rate': self.config.d_optimizer.learning_rate}.update(self.config.d_optimizer.params_to_dict()))
 
     def _initialize_models(self):
-        # initialize the generator and the discriminator
         self.generator.initialize(mx.init.Xavier(), ctx=self.context)
         self.generator.hybridize()
 
@@ -106,25 +134,17 @@ class Trainer:
         self.discriminator.hybridize()
 
     def _initialize_metrics(self):
-        def stable_log(x):
-            return np.log( np.maximum(np.full(x.shape, fill_value=1e-10), x) )
-
-        def bce(label, pred):
-            return -np.sum(stable_log(pred) * label + stable_log(1. - pred) * (1. - label)), label.size
-
-        self.g_acc = mx.metric.CompositeEvalMetric(
-            [mx.metric.Accuracy(), mx.metric.CustomMetric(bce)],
-            name='Generator'
-        )
+        def distance(_, pred):
+            return pred.sum(), pred.size
 
         self.d_acc = mx.metric.CompositeEvalMetric(
-            [mx.metric.Accuracy(), mx.metric.CustomMetric(bce)],
-            name='Discriminator'
+            [mx.metric.CustomMetric(distance)],
+            name='Negative_EM_distance'
         )
 
     def fit(self,
-            dataset,
-            epochs=10,
+            dataset: data.Dataset,
+            epochs: int,
             samples_output_path: str = None):
 
         n_batches = 0
@@ -135,16 +155,14 @@ class Trainer:
             for batch in dataset:
                 batch_size = batch.data[0].shape[0]
                 [real_tokens, real_classes] = batch.data[0].as_in_context(self.context), batch.data[1].as_in_context(self.context)
-                ones = mx.nd.ones((batch_size,), ctx=self.context)
-                zeros = mx.nd.zeros((batch_size,), ctx=self.context)
                 seq_lens = mx.nd.where(real_tokens != 0,
                                        mx.nd.ones_like(real_tokens),
                                        mx.nd.zeros_like(real_tokens)).sum(axis=1)
 
                 if n_batches % (self.config.discriminator_update_steps+1) == 0:
-                    self._generator_step(batch_size, ones, real_tokens, real_classes, seq_lens)
+                    self._generator_step(batch_size, real_tokens, seq_lens)
                 else:
-                    self._discriminator_step(batch_size, ones, zeros, real_tokens, real_classes, seq_lens)
+                    self._discriminator_step(batch_size, real_tokens, real_classes, seq_lens)
 
                 n_batches += 1
                 if n_batches % 50 == 0:
@@ -152,7 +170,7 @@ class Trainer:
 
                     if samples_output_path is not None and self.config.sampling_frequency > 0 and n_batches % self.config.sampling_frequency == 0 :
 
-                        print("Generating samples from a melody of original class {}".format(real_classes[0].asscalar()))
+                        print("Generating samples from a melody of original class {}".format(int(real_classes[0].asscalar())))
                         generate_melodies(mx.nd.expand_dims(real_tokens[0, :], axis=0),
                                           dataset.num_classes(),
                                           output_path='{}/generated-step-{}'.format(samples_output_path, n_batches),
@@ -160,46 +178,77 @@ class Trainer:
                                           context=self.context)
 
     def _periodic_log(self, epoch, n_batches, start_time):
-        generator_loss = 'Generator '
-        for name, val in zip(*self.g_acc.get()):
-            generator_loss += '{}={:.3f} '.format(name, val)
-        discriminator_loss = 'Discriminator '
-        for name, val in zip(*self.d_acc.get()):
-            discriminator_loss += '{}={:.3f} '.format(name, val)
-        print("Epoch [{}] Batch [{}] updates/sec: {:.2f} {} {}".format(epoch,
-                                                                       n_batches,
-                                                                       n_batches / (time() - start_time),
-                                                                       generator_loss,
-                                                                       discriminator_loss))
-        self.d_acc.reset()
-        self.g_acc.reset()
 
-    def _generator_step(self, batch_size, ones, tokens, classes, seq_lens):
+        out = ''
+        for metric in [self.d_acc]:
+            loss_name = metric.name
+            for metric_name, val in metric.get_name_value():
+                self.summary_writer.add_scalar(tag="{}_{}".format(loss_name, metric_name),
+                                               value=val, global_step=n_batches)
+                out += '{}_{}={:.3f} '.format(loss_name, metric_name, val)
+
+            metric.reset()
+
+        print("Epoch [{}] Batch [{}] updates/sec: {:.2f} {}".format(epoch,
+                                                                    n_batches,
+                                                                    n_batches / (time() - start_time),
+                                                                    out))
+
+        self._log_gradients(self.discriminator, n_batches, 'discriminator')
+        self._log_gradients(self.generator, n_batches, 'generator')
+
+
+    def _log_gradients(self, model, n_batches, output_prefix: str):
+        # logging the gradients of parameters for checking convergence
+        average_gradient_norm = 0.
+        n_valid_gradients = 0
+        for i, (name, grad) in enumerate(model.collect_params().items()):
+            if grad.grad_req == 'null':
+                continue
+            self.summary_writer.add_scalar(tag=name, value=grad.grad().norm().asscalar(), global_step=n_batches)
+            average_gradient_norm += grad.grad().norm().asscalar()
+            n_valid_gradients += 1
+
+        self.summary_writer.add_scalar(tag=output_prefix + '_global_grad',
+                                       value=average_gradient_norm / n_valid_gradients,
+                                       global_step=n_batches)
+
+
+    def _generator_step(self, batch_size, tokens, seq_lens):
+
+        classes = self._get_fake_classes(batch_size)
         with autograd.record():
-            print(tokens, classes)
-            fake_tokens, fake_classes = self.generator.forward(tokens, classes)
-            print(fake_tokens.argmax(axis=2), fake_classes.argmax(axis=1))
+            noise = self.generator.create_noise(tokens.shape)
+            fake_tokens = self.generator.forward(tokens, classes, noise)
+            _, fake_classes = self.discriminator.convert_to_one_hot(tokens, classes)
 
-            output = self.discriminator.forward(fake_tokens, fake_classes, seq_lens)
-            loss = self.g_loss(output, ones)
+            loss = -1 * self.discriminator.forward(fake_tokens, fake_classes, seq_lens)
             loss.backward()
-        self.g_acc.update([ones, ], [output, ])
+
         self.g_optimizer.step(batch_size)
 
-    def _discriminator_step(self, batch_size, ones, zeros,
+    def _discriminator_step(self, batch_size,
                             real_tokens, real_classes, seq_lens):
+
+        classes = self._get_fake_classes(batch_size)
+
         with autograd.record():
-            real = self.discriminator.forward(*self.discriminator.convert_to_one_hot(real_tokens, real_classes), seq_lens)
-            loss_real = self.d_loss(real, ones)
+            real_tokens_oh, real_classes_oh = self.discriminator.convert_to_one_hot(real_tokens, real_classes)
+            loss_real = self.discriminator.forward(real_tokens_oh, real_classes_oh, seq_lens)
 
-            fake_tokens, fake_classes = self.generator.forward(real_tokens, real_classes)
-            # detach s.t. no gradients are given to the generator
-            fake = self.discriminator.forward(fake_tokens.detach(), fake_classes.detach(), seq_lens)
-            loss_fake = self.d_loss(fake, zeros)
+            noise = self.generator.create_noise(real_tokens.shape)
+            fake_tokens = self.generator.forward(real_tokens, classes, noise)
+            _, fake_classes = self.discriminator.convert_to_one_hot(real_tokens, classes)
+            loss_fake = self.discriminator.forward(fake_tokens, fake_classes, seq_lens)
 
-            loss = loss_fake + loss_real
+            loss = loss_fake - loss_real
             loss.backward()
 
         self.d_optimizer.step(batch_size)
-        self.d_acc.update([ones, ], [real, ])
-        self.d_acc.update([zeros, ], [fake, ])
+        self.d_acc.update([mx.nd.ones_like(loss), ], [loss, ])
+
+
+    def _get_fake_classes(self, batch_size):
+        classes = mx.nd.array(np.random.randint(low=0, high=self.generator.config.conditional_class_config.input_dim,
+                                                size=batch_size), ctx=self.context)
+        return classes

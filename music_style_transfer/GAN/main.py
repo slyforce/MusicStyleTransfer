@@ -1,4 +1,4 @@
-from music_style_transfer.GAN.data import ToyData, MelodyDataset, Loader, Dataset
+from music_style_transfer.GAN.data import ToyData, MelodyDataset, Loader, Dataset, ToyDataV2
 from music_style_transfer.GAN import model
 from music_style_transfer.GAN import trainer
 from .config import get_config
@@ -9,37 +9,42 @@ def create_toy_model_configs(data):
     generator_config = model.ModelConfig(
         encoder_config=model.EncoderConfig(
             n_layers=1,
-            hidden_dim=16),
+            hidden_dim=64),
         embedding_config=model.EmbeddingConfig(
             input_dim=data.num_tokens(),
-            hidden_dim=4,
+            hidden_dim=64,
             mask_zero=True),
         conditional_class_config=model.EmbeddingConfig(
             input_dim=data.num_classes(),
-            hidden_dim=4,
+            hidden_dim=64,
             mask_zero=False),
         output_layer_config=model.OutputLayerConfig(
             output_dim=data.num_tokens()),
         class_output_layer_config=model.OutputLayerConfig(
-            output_dim=data.num_classes())
+            output_dim=data.num_classes()),
+        noise_config=model.NoiseConfig(
+            noise_dim=64,
+            variance=0.05
+        )
     )
 
     discriminator_config = model.ModelConfig(
         encoder_config=model.EncoderConfig(
             n_layers=1,
-            hidden_dim=16),
+            hidden_dim=64),
         embedding_config=model.EmbeddingConfig(
             input_dim=data.num_tokens(),
-            hidden_dim=4,
+            hidden_dim=64,
             mask_zero=True),
         conditional_class_config=model.EmbeddingConfig(
             input_dim=data.num_classes(),
-            hidden_dim=4,
+            hidden_dim=64,
             mask_zero=False),
         output_layer_config=model.OutputLayerConfig(
             output_dim=1,
             softmax=False),
-        class_output_layer_config=None
+        class_output_layer_config=None,
+        noise_config=None
     )
 
     return generator_config, discriminator_config
@@ -47,16 +52,18 @@ def create_toy_model_configs(data):
 
 def create_toy_train_config():
     config = trainer.TrainConfig(batch_size=1,
-                                 discriminator_update_steps=1,
-                                 sampling_frequency=100,
-                                 d_label_smoothing=0.1,
+                                 discriminator_update_steps=5,
+                                 sampling_frequency=500,
+                                 d_label_smoothing=0.0,
                                  d_optimizer=trainer.OptimizerConfig(
-                                     learning_rate=0.01,
-                                     optimizer='adam'
+                                     learning_rate=5e-5,
+                                     optimizer='rmsprop',
+                                     optimizer_params = 'clip_weights:0.01,clip_gradient:1.0',
                                  ),
                                  g_optimizer=trainer.OptimizerConfig(
-                                     learning_rate=0.01,
-                                     optimizer='adam'
+                                     learning_rate=5e-5,
+                                     optimizer='rmsprop',
+                                     optimizer_params='clip_gradient:1.0'
                                  ))
     return config
 
@@ -68,11 +75,13 @@ def create_train_config(args):
                                  d_label_smoothing=args.label_smoothing,
                                  d_optimizer=trainer.OptimizerConfig(
                                      learning_rate=args.d_learning_rate,
-                                     optimizer='adam'
+                                     optimizer='rmsprop',
+                                     optimizer_params = 'clip_weights:0.01,clip_gradient:1.0',
                                  ),
                                  g_optimizer=trainer.OptimizerConfig(
                                      learning_rate=args.g_learning_rate,
-                                     optimizer='adam'
+                                     optimizer='rmsprop',
+                                     optimizer_params='clip_gradient:1.0'
                                  ))
     return config
 
@@ -93,7 +102,11 @@ def create_model_configs(args, dataset: Dataset):
         output_layer_config=model.OutputLayerConfig(
             output_dim=dataset.num_tokens()),
         class_output_layer_config=model.OutputLayerConfig(
-            output_dim=dataset.num_classes())
+            output_dim=dataset.num_classes()),
+        noise_config=model.NoiseConfig(
+            noise_dim=args.noise_dim,
+            variance=0.01
+        )
     )
 
     discriminator_config = model.ModelConfig(
@@ -111,7 +124,8 @@ def create_model_configs(args, dataset: Dataset):
         output_layer_config=model.OutputLayerConfig(
             output_dim=1,
             softmax=False),
-        class_output_layer_config=None
+        class_output_layer_config=None,
+        noise_config=None
     )
 
     return generator_config, discriminator_config
@@ -119,6 +133,7 @@ def create_model_configs(args, dataset: Dataset):
 
 def main_toy():
     dataset = ToyData(1)
+    #dataset = ToyDataV2(1)
 
     g_config, d_config = create_toy_model_configs(dataset)
 
@@ -131,7 +146,8 @@ def main_toy():
                         discriminator=discriminator)
 
     t.fit(dataset=dataset,
-          epochs=2000)
+          epochs=20000,
+          samples_output_path='/tmp/out')
 
 def main():
     args = get_config()
