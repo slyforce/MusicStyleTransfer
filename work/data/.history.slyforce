@@ -1,0 +1,38 @@
+2018-09-16.20-28-39 mkdir guitar_bass
+2018-09-16.20-29-21 ..
+2018-09-16.20-29-25 mkdir splits
+2018-09-16.20-30-05 ..
+2018-09-16.20-30-07 python -m music_style_transfer.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-30-20 #python -m music_style_transfer.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-31-16 #python -m music_style_transfer.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-31-17 python -m music_style_transfer.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-31-22 python -m music_style_transfer.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-31-23 deactivate 
+2018-09-16.20-31-35 source ~/src/MusicStyleTransfer/venv/bin/activate
+2018-09-16.20-31-38 python -m music_style_transfer.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-31-46 python -m music_style_transfer.MIDIUtils.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-31-55 python -m music_style_transfer.MIDIUtil.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-32-10 python3.5 -m music_style_transfer.MIDIUtil.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-32-19 .
+2018-09-16.20-32-20 pwd
+2018-09-16.20-32-29 python3.5 -m music_style_transfer.MIDIUtil.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-32-30 python3.5 -m music_style_transfer.MIDIUtil.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-32-33 deactivate 
+2018-09-16.20-32-35 source ~/src/MusicStyleTransfer/venv/bin/activate
+2018-09-16.20-32-38 python3.5 -m music_style_transfer.MIDIUtil.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-33-09 python3.5 -m music_style_transfer.MIDIUtil.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-33-21 python3.5 -m music_style_transfer.MIDIUtil.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-33-26 python -m music_style_transfer.MIDIUtil.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-33-30 python -m music_style_transfer.MIDIUtil.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-33-34 python
+2018-09-16.20-37-44 ..
+2018-09-16.20-37-46 python -m music_style_transfer.MIDIUtil.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-37-59 source ~/src/MusicStyleTransfer/venv/bin/activate
+2018-09-16.20-38-04 python -m music_style_transfer.MIDIUtil.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-38-16 rm splits* 
+2018-09-16.20-38-25 python -m music_style_transfer.MIDIUtil.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits/
+2018-09-16.20-38-41 ..
+2018-09-16.20-38-53 cp splits/*Bass* guitar_bass/bass/
+2018-09-16.20-38-58 cp splits/*Guitar* guitar_bass/guitar/
+2018-09-16.20-39-07 ..
+2018-10-02.21-56-26 ..

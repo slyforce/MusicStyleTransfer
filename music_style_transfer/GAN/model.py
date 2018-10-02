@@ -121,6 +121,8 @@ class Generator(mx.gluon.HybridBlock):
         # shape: (batch_size, seq_len, num_token_types)
         token_output = F.softmax(self.output_layer.forward(token_emb))
 
+        print(self.output_layer.forward(token_emb))
+
         return token_output
 
     def create_noise(self, shape: Tuple[int, int]):

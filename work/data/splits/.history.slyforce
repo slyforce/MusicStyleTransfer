@@ -1,0 +1,2 @@
+2018-09-16.20-30-00 python -m music_style_transfer.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 
+2018-09-16.20-30-05 #python -m music_style_transfer.MIDISplitter ~/Downloads/Metal_Rock_rock.freemidis.net_MIDIRip/midi/m/metallica/ splits 

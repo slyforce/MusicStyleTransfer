@@ -84,10 +84,11 @@ def generate_melodies(original_melody_nd: mx.nd.NDArray,
 
     pitches_per_class = []
     for c in range(0, num_classes):
-        noise = generator.create_noise(original_melody_nd.shape)
+        noise = generator.create_noise(original_melody_nd.shape).as_in_context(context)
         generated = generator.forward(original_melody_nd, mx.nd.array([c], ctx=context), noise)
 
         # take the maximum over all classes
+        print(mx.nd.max(generated, axis=2))
         pitches_per_class += [mx.nd.argmax(generated, axis=2).asnumpy().ravel()]
 
     original_melody = construct_melody_from_integers([int(x) for x in original_melody_nd.asnumpy().ravel()])
@@ -128,10 +129,10 @@ class Trainer:
 
     def _initialize_models(self):
         self.generator.initialize(mx.init.Xavier(), ctx=self.context)
-        self.generator.hybridize()
+        #self.generator.hybridize()
 
         self.discriminator.initialize(mx.init.Xavier(), ctx=self.context)
-        self.discriminator.hybridize()
+        #self.discriminator.hybridize()
 
     def _initialize_metrics(self):
         def distance(_, pred):
@@ -218,7 +219,7 @@ class Trainer:
 
         classes = self._get_fake_classes(batch_size)
         with autograd.record():
-            noise = self.generator.create_noise(tokens.shape)
+            noise = self.generator.create_noise(tokens.shape).as_in_context(self.context)
             fake_tokens = self.generator.forward(tokens, classes, noise)
             _, fake_classes = self.discriminator.convert_to_one_hot(tokens, classes)
 
@@ -236,7 +237,7 @@ class Trainer:
             real_tokens_oh, real_classes_oh = self.discriminator.convert_to_one_hot(real_tokens, real_classes)
             loss_real = self.discriminator.forward(real_tokens_oh, real_classes_oh, seq_lens)
 
-            noise = self.generator.create_noise(real_tokens.shape)
+            noise = self.generator.create_noise(real_tokens.shape).as_in_context(self.context)
             fake_tokens = self.generator.forward(real_tokens, classes, noise)
             _, fake_classes = self.discriminator.convert_to_one_hot(real_tokens, classes)
             loss_fake = self.discriminator.forward(fake_tokens, fake_classes, seq_lens)
