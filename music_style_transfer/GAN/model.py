@@ -64,7 +64,7 @@ class Generator(mx.gluon.HybridBlock):
         with self.name_scope():
             self.encoder = LSTM(config.encoder_config.hidden_dim,
                                 config.encoder_config.n_layers,
-                                dropout=0.2,
+                                dropout=0.0,
                                 input_size=self.config.embedding_config.hidden_dim + self.config.noise_config.noise_dim,
                                 layout='NTC')
 
@@ -120,9 +120,6 @@ class Generator(mx.gluon.HybridBlock):
         # project the encoder outputs to the respective class vocabulary sizes
         # shape: (batch_size, seq_len, num_token_types)
         token_output = F.softmax(self.output_layer.forward(token_emb))
-
-        print(self.output_layer.forward(token_emb))
-
         return token_output
 
     def create_noise(self, shape: Tuple[int, int]):
@@ -137,23 +134,26 @@ class Discriminator(mx.gluon.HybridBlock):
                  config: ModelConfig):
         super(Discriminator, self).__init__()
         self.config = config
+        self.input_smoothing = 0.0
         with self.name_scope():
             self.encoder = LSTM(config.encoder_config.hidden_dim,
                                 config.encoder_config.n_layers,
-                                dropout=0.2,
+                                dropout=0.0,
                                 input_size=self.config.embedding_config.hidden_dim,
                                 layout='NTC')
 
             self.embeddings = Dense(
                 in_units=self.config.embedding_config.input_dim,
                 units=self.config.embedding_config.hidden_dim,
-                flatten=False
+                flatten=False,
+                use_bias=False
             )
 
             self.class_embeddings = Dense(
                 in_units=self.config.conditional_class_config.input_dim,
                 units=self.config.conditional_class_config.hidden_dim,
-                flatten=False
+                flatten=False,
+                use_bias=False
             )
 
             self.output_layer = Dense(
@@ -194,6 +194,17 @@ class Discriminator(mx.gluon.HybridBlock):
         encoder_output = F.squeeze(self.output_layer.forward(encoder_output))
         return encoder_output
 
+    def compute_embedding_differences(self):
+
+        loss = 0.
+        weights = mx.nd.transpose(self.embeddings.weight.data(), axes=(0,1))
+        for i in range(self.config.embedding_config.input_dim):
+            for j in range(i + 1, self.config.embedding_config.input_dim):
+                loss = loss + (weights[i,:] - weights[j,:]) ** 2
+
+        return loss.sum()
+
+
     def convert_to_one_hot(self, source_tokens: mx.nd.NDArray, conditional_class: mx.nd.NDArray):
         """
         source_tokens: (batch_size, max_sequence_len)
@@ -212,6 +223,8 @@ class Discriminator(mx.gluon.HybridBlock):
             depth=self.config.conditional_class_config.input_dim,
             on_value=1.,
             off_value=0.)
+
+        source_tokens = self.input_smoothing * 1. / self.config.embedding_config.input_dim + (1-self.input_smoothing) * source_tokens
 
         return source_tokens, conditional_class
 

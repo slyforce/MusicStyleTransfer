@@ -43,12 +43,14 @@ class TrainConfig:
     def __init__(self,
                  batch_size: int,
                  discriminator_update_steps: int,
+                 gradient_penalty: float,
                  sampling_frequency: int,
                  d_label_smoothing: float,
                  g_optimizer: OptimizerConfig,
                  d_optimizer: OptimizerConfig):
         self.batch_size = batch_size
         self.discriminator_update_steps = discriminator_update_steps
+        self.gradient_penalty_weight = gradient_penalty
         self.sampling_frequency = sampling_frequency
         self.d_label_smoothing = d_label_smoothing
         self.g_optimizer = g_optimizer
@@ -120,19 +122,25 @@ class Trainer:
 
     def _initialize_optimizers(self):
         # trainer for the generator and the discriminator
+
+        g_optimizer_params = {'learning_rate': self.config.g_optimizer.learning_rate}
+        g_optimizer_params.update(self.config.g_optimizer.params_to_dict())
         self.g_optimizer = gluon.Trainer(self.generator.collect_params(),
                                          self.config.g_optimizer.optimizer,
-                                         {'learning_rate': self.config.g_optimizer.learning_rate}.update(self.config.d_optimizer.params_to_dict()))
+                                         g_optimizer_params)
+
+        d_optimizer_params = {'learning_rate': self.config.d_optimizer.learning_rate}
+        d_optimizer_params.update(self.config.d_optimizer.params_to_dict())
         self.d_optimizer = gluon.Trainer(self.discriminator.collect_params(),
                                          self.config.d_optimizer.optimizer,
-                                         {'learning_rate': self.config.d_optimizer.learning_rate}.update(self.config.d_optimizer.params_to_dict()))
+                                         d_optimizer_params)
 
     def _initialize_models(self):
         self.generator.initialize(mx.init.Xavier(), ctx=self.context)
-        #self.generator.hybridize()
+        self.generator.hybridize()
 
         self.discriminator.initialize(mx.init.Xavier(), ctx=self.context)
-        #self.discriminator.hybridize()
+        self.discriminator.hybridize()
 
     def _initialize_metrics(self):
         def distance(_, pred):
@@ -140,7 +148,12 @@ class Trainer:
 
         self.d_acc = mx.metric.CompositeEvalMetric(
             [mx.metric.CustomMetric(distance)],
-            name='Negative_EM_distance'
+            name='Negative_EM'
+        )
+
+        self.d_embeddings = mx.metric.CompositeEvalMetric(
+            [mx.metric.CustomMetric(distance)],
+            name='Gradient_Penalty'
         )
 
     def fit(self,
@@ -148,7 +161,7 @@ class Trainer:
             epochs: int,
             samples_output_path: str = None):
 
-        n_batches = 0
+        self.n_batches = 0
         start_time = time()
 
         print("Starting training")
@@ -160,44 +173,43 @@ class Trainer:
                                        mx.nd.ones_like(real_tokens),
                                        mx.nd.zeros_like(real_tokens)).sum(axis=1)
 
-                if n_batches % (self.config.discriminator_update_steps+1) == 0:
+                if self.n_batches % (self.config.discriminator_update_steps+1) == 0:
                     self._generator_step(batch_size, real_tokens, seq_lens)
                 else:
                     self._discriminator_step(batch_size, real_tokens, real_classes, seq_lens)
 
-                n_batches += 1
-                if n_batches % 50 == 0:
-                    self._periodic_log(epoch, n_batches, start_time)
+                self.n_batches += 1
+                if self.n_batches % 50 == 0:
+                    self._periodic_log(epoch, start_time)
 
-                    if samples_output_path is not None and self.config.sampling_frequency > 0 and n_batches % self.config.sampling_frequency == 0 :
+                    if samples_output_path is not None and self.config.sampling_frequency > 0 and self.n_batches % self.config.sampling_frequency == 0 :
 
                         print("Generating samples from a melody of original class {}".format(int(real_classes[0].asscalar())))
                         generate_melodies(mx.nd.expand_dims(real_tokens[0, :], axis=0),
                                           dataset.num_classes(),
-                                          output_path='{}/generated-step-{}'.format(samples_output_path, n_batches),
+                                          output_path='{}/generated-step-{}'.format(samples_output_path, self.n_batches),
                                           generator=self.generator,
                                           context=self.context)
 
-    def _periodic_log(self, epoch, n_batches, start_time):
+    def _periodic_log(self, epoch, start_time):
 
         out = ''
-        for metric in [self.d_acc]:
+        for metric in [self.d_acc, self.d_embeddings]:
             loss_name = metric.name
             for metric_name, val in metric.get_name_value():
                 self.summary_writer.add_scalar(tag="{}_{}".format(loss_name, metric_name),
-                                               value=val, global_step=n_batches)
+                                               value=val, global_step=self.n_batches)
                 out += '{}_{}={:.3f} '.format(loss_name, metric_name, val)
 
             metric.reset()
 
         print("Epoch [{}] Batch [{}] updates/sec: {:.2f} {}".format(epoch,
-                                                                    n_batches,
-                                                                    n_batches / (time() - start_time),
+                                                                    self.n_batches,
+                                                                    self.n_batches / (time() - start_time),
                                                                     out))
 
-        self._log_gradients(self.discriminator, n_batches, 'discriminator')
-        self._log_gradients(self.generator, n_batches, 'generator')
-
+        self._log_gradients(self.discriminator, self.n_batches, 'discriminator')
+        self._log_gradients(self.generator, self.n_batches, 'generator')
 
     def _log_gradients(self, model, n_batches, output_prefix: str):
         # logging the gradients of parameters for checking convergence
@@ -214,7 +226,6 @@ class Trainer:
                                        value=average_gradient_norm / n_valid_gradients,
                                        global_step=n_batches)
 
-
     def _generator_step(self, batch_size, tokens, seq_lens):
 
         classes = self._get_fake_classes(batch_size)
@@ -227,26 +238,43 @@ class Trainer:
             loss.backward()
 
         self.g_optimizer.step(batch_size)
+        self._log_gradients(self.generator, self.n_batches, 'generator')
 
     def _discriminator_step(self, batch_size,
                             real_tokens, real_classes, seq_lens):
 
         classes = self._get_fake_classes(batch_size)
+        real_tokens_oh, real_classes_oh = self.discriminator.convert_to_one_hot(real_tokens, real_classes)
+
+        noise = self.generator.create_noise(real_tokens.shape).as_in_context(self.context)
+        fake_tokens = self.generator.forward(real_tokens, classes, noise)
+        _, fake_classes = self.discriminator.convert_to_one_hot(real_tokens, classes)
+
+        if self.config.gradient_penalty_weight != 0.0:
+            combi_tokens = (real_tokens_oh + fake_tokens) / 2.
+            combi_tokens.attach_grad()
+
+            combi_classes = (real_classes_oh + fake_classes) / 2.
+            combi_classes.attach_grad()
 
         with autograd.record():
-            real_tokens_oh, real_classes_oh = self.discriminator.convert_to_one_hot(real_tokens, real_classes)
             loss_real = self.discriminator.forward(real_tokens_oh, real_classes_oh, seq_lens)
-
-            noise = self.generator.create_noise(real_tokens.shape).as_in_context(self.context)
-            fake_tokens = self.generator.forward(real_tokens, classes, noise)
-            _, fake_classes = self.discriminator.convert_to_one_hot(real_tokens, classes)
             loss_fake = self.discriminator.forward(fake_tokens, fake_classes, seq_lens)
-
-            loss = loss_fake - loss_real
+            em_distance = loss_fake - loss_real
+            if self.config.gradient_penalty_weight != 0.0:
+                loss_combi = self.discriminator.forward(combi_tokens, combi_classes, seq_lens)
+                [grad_combi, grad_combi_classes] = mx.autograd.grad(loss_combi, [combi_tokens, combi_classes], retain_graph=True)
+                gradient_penalty = (grad_combi.norm() - 1) ** 2 + (grad_combi_classes.norm() - 1) ** 2
+                loss = em_distance + self.config.gradient_penalty_weight * gradient_penalty
+            else:
+                loss = em_distance
             loss.backward()
 
         self.d_optimizer.step(batch_size)
-        self.d_acc.update([mx.nd.ones_like(loss), ], [loss, ])
+        self.d_acc.update([mx.nd.ones_like(loss), ], [em_distance , ])
+        if self.config.gradient_penalty_weight != 0.0:
+            self.d_embeddings.update([mx.nd.ones_like(loss), ], [gradient_penalty, ])
+        self._log_gradients(self.discriminator, self.n_batches, 'discriminator')
 
 
     def _get_fake_classes(self, batch_size):

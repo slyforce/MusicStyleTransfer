@@ -52,18 +52,19 @@ def create_toy_model_configs(data):
 
 def create_toy_train_config():
     config = trainer.TrainConfig(batch_size=1,
-                                 discriminator_update_steps=5,
+                                 discriminator_update_steps=10,
+                                 gradient_penalty=0.0,
                                  sampling_frequency=500,
                                  d_label_smoothing=0.0,
                                  d_optimizer=trainer.OptimizerConfig(
                                      learning_rate=5e-5,
                                      optimizer='rmsprop',
-                                     optimizer_params = 'clip_weights:0.01,clip_gradient:1.0',
+                                     optimizer_params='clip_weights:0.2',
                                  ),
                                  g_optimizer=trainer.OptimizerConfig(
                                      learning_rate=5e-5,
                                      optimizer='rmsprop',
-                                     optimizer_params='clip_gradient:1.0'
+                                     optimizer_params=''
                                  ))
     return config
 
@@ -132,8 +133,8 @@ def create_model_configs(args, dataset: Dataset):
 
 
 def main_toy():
-    dataset = ToyData(1)
-    #dataset = ToyDataV2(1)
+    #dataset = ToyData(1)
+    dataset = ToyDataV2(1)
 
     g_config, d_config = create_toy_model_configs(dataset)
 
