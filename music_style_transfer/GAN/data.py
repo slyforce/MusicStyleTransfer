@@ -32,7 +32,7 @@ class Loader:
         print("Reading from {}".format(self.path))
         melodies = {}
         directories = next(os.walk(self.path))[1]
-        for directory in directories:
+        for directory in sorted(directories):
             melodies[directory] = []
             for n_files, fname in enumerate(glob.glob(self.path + '/' + directory + "/*.mid")):
                 melody = self.midi_reader.read_file(fname)[0]
@@ -100,28 +100,6 @@ class ToyData(Dataset):
             yield batch
 
 
-class ToyDataV2(Dataset):
-    def __init__(self,
-                 batch_size: int):
-        super(ToyDataV2, self).__init__(batch_size)
-        self.batch_size = 3
-        self.iter = mx.io.NDArrayIter({'data0': mx.nd.array([[1],
-                                                             [2],
-                                                             [3]]),
-                                       'data1': mx.nd.array([0,1,2])},
-                                        batch_size=self.batch_size, shuffle=False)
-    def num_classes(self):
-        return 3
-
-    def num_tokens(self):
-        return 4
-
-    def __iter__(self):
-        self.iter.reset()
-        for batch in self.iter:
-            yield batch
-
-
 class MelodyDataset(Dataset):
     def __init__(self,
                  batch_size: int,
@@ -177,12 +155,11 @@ class MelodyDataset(Dataset):
 
         arrays = []
         for melodies in self.melodies.values():
-            a = np.zeros((len(melodies), self.max_sequence_length))
+            a = np.zeros((len(melodies), self.max_sequence_length, 2))
             for i, melody in enumerate(melodies):
                 # +1 due to masking
-                print(melody.notes)
-                a[i, :len(melody.notes)] = np.array(
-                    [n.get_midi_index() + self.mask_offset for n in melody.notes])
+                a[i, :len(melody.notes), 0] = np.array([n.get_midi_index() + self.mask_offset for n in melody.notes])
+                a[i, :len(melody.notes), 1] = np.array([1 if n.articulated else 0 for n in melody.notes])
 
             arrays.append(a)
 
@@ -193,4 +170,26 @@ class MelodyDataset(Dataset):
         self.iter.reset()
         for batch in self.iter:
             yield batch
+
+def load_dataset(melodies: Dict[str, List[Melody]],
+                 split_percentage: float,
+                 batch_size: int):
+    assert 0.0 <= split_percentage < 1.0
+
+    if split_percentage == 0.0:
+        # use the training data as validation data per default
+        # todo: replace this with an optional validation path
+        dataset = MelodyDataset(batch_size, melodies)
+        return dataset, dataset
+
+    train_melodies, valid_melodies = {}, {}
+    for c, m in melodies.items():
+        n_validation_melodies = int(split_percentage * len(m))
+        valid_melodies[c] = m[:n_validation_melodies]
+        train_melodies[c] = m[n_validation_melodies:]
+
+    return MelodyDataset(batch_size, train_melodies),  MelodyDataset(batch_size, valid_melodies)
+
+
+
 

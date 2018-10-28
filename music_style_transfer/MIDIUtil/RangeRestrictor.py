@@ -1,7 +1,6 @@
 from .Melody import Melody
 from .Note import Note, SilenceNote
-from .defaults import *
-
+from music_style_transfer.MIDIUtil.defaults import *
 
 class RangeRestrictor:
     def __init__(self):

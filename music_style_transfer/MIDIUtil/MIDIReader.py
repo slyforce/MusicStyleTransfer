@@ -2,7 +2,7 @@ import midi
 
 from .Melody import Melody
 from .Note import Note
-from .defaults import *
+from music_style_transfer.MIDIUtil.defaults import *
 
 from typing import List
 
@@ -68,13 +68,13 @@ class MIDIReader:
             # Check if the track is too small
             # This can be the case for description tracks
             if len(new_melody.notes) < 10:
+                print('Warning: {} contains melodies of length {} < 10. Discarding'.format(file_name, len(new_melody.notes)))
                 continue
 
             result.append(new_melody)
 
-        result = self.clean_melodies(result)
-
-        return result
+        assert len(result) > 0
+        return self.clean_melodies(result)
 
     def _generate_notes(self,
                         melody: Melody,

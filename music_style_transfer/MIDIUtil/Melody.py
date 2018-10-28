@@ -1,4 +1,4 @@
-from .defaults import *
+from music_style_transfer.MIDIUtil.defaults import *
 
 
 class Melody:

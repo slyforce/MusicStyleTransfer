@@ -1,7 +1,8 @@
-from music_style_transfer.GAN.data import ToyData, MelodyDataset, Loader, Dataset, ToyDataV2
+from music_style_transfer.GAN.data import ToyData, MelodyDataset, Loader, Dataset, load_dataset
 from music_style_transfer.VarAutoEncoder import model
 from music_style_transfer.VarAutoEncoder import trainer
 from .config import get_config
+from .utils import create_directory_if_not_present
 import os
 import mxnet as mx
 
@@ -51,6 +52,7 @@ def create_train_config(args):
                                  sampling_frequency=args.sampling_frequency,
                                  checkpoint_frequency=args.checkpoint_frequency,
                                  num_checkpoints_not_improved=args.num_checkpoints_not_improved,
+                                 kl_loss=args.kl_loss,
                                  optimizer=trainer.OptimizerConfig(
                                      learning_rate=args.learning_rate,
                                      optimizer=args.optimizer,
@@ -117,14 +119,16 @@ def main():
                     max_sequence_length=args.max_seq_len,
                     slices_per_quarter_note=args.slices_per_quarter_note)
 
-    dataset = MelodyDataset(
-        melodies=loader.melodies,
-        batch_size=args.batch_size)
+    train_dataset, valid_dataset = load_dataset(loader.melodies, args.validation_split, args.batch_size)
 
-    if not os.path.exists(args.out_samples):
-        os.makedirs(args.out_samples)
+    create_directory_if_not_present(args.model_output)
+    create_directory_if_not_present(args.model_output + '/decoder/')
+    create_directory_if_not_present(args.model_output + '/encoder/')
+    create_directory_if_not_present(args.out_samples)
 
-    d_config, e_config = create_model_configs(args, dataset)
+    d_config, e_config = create_model_configs(args, train_dataset)
+    d_config.save(args.model_output + '/decoder/config')
+    e_config.save(args.model_output + '/encoder/config')
 
     decoder = model.Decoder(config=d_config)
     encoder = model.Encoder(config=e_config)
@@ -134,8 +138,9 @@ def main():
                         decoder=decoder,
                         encoder=encoder)
 
-    t.fit(dataset=dataset,
-          validation_dataset=dataset,
+    t.fit(dataset=train_dataset,
+          validation_dataset=valid_dataset,
+          model_folder=args.model_output,
           epochs=args.epochs,
           samples_output_path=args.out_samples)
 

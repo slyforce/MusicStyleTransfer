@@ -1,11 +1,12 @@
-from .defaults import *
+from music_style_transfer.MIDIUtil.defaults import *
 import numpy as np
 import midi
 
 
 class Note:
     def __init__(self,
-                 midi_pitch: int = None):
+                 midi_pitch: int = None,
+                 articulated: bool = False):
 
         if midi_pitch is None:
             # The pitch of the note
@@ -19,7 +20,7 @@ class Note:
         self.length = DEF_TICK_STEP_SIZE
 
         # Whether the note is being played or articulated
-        self.articulated = False
+        self.articulated = articulated
 
     def set_from_midi_pitch(self, midi_pitch: int):
         if midi_pitch == 120:
