@@ -209,9 +209,16 @@ class Trainer:
             m.reset()
 
         for batch in validation_dataset:
-            [tokens, articulations, classes] = batch.data
-            art_loss, kl_loss, loss, tk_loss = self._forward_pass_with_loss_computation(articulations, classes, noise, tokens)
-            self._update_metrics(art_loss, articulations, kl_loss, loss, tk_loss)
+            [tokens, articulations, classes] = [x.as_in_context(self.context) for x in batch.data]
+            (batch_size, seq_len, _) = tokens.shape
+
+            loss, sep_losses, outputs = self._forward_pass_with_loss_computation(articulations,
+                                                                                 classes,
+                                                                                 self._generate_var_ae_noise(batch_size, seq_len),
+                                                                                 tokens)
+            self._update_metrics(loss, *sep_losses,
+                                 tokens, articulations,
+                                 *outputs)
 
         r_loss = self.main_metric.get()[1]
         if r_loss < self.train_state.best_resconstruction_loss:
