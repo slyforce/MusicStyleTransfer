@@ -30,40 +30,58 @@ class MelodyWriter:
         midi.write_midifile(file_name, pattern)
 
     def _write_track(self, melody, tick_step_size, track):
-        notes = melody.notes
-        next_tick_start = 0
-        i = 0
-        while i < len(notes):
-            note = notes[i]
-            if note.pitch != SILENCE and not note.articulated:
-                pitch = self.get_midi_pitch(note)
-                on = midi.NoteOnEvent(
-                    tick=next_tick_start, velocity=127, pitch=pitch)
-                track.append(on)
+        previous_pitches = set()
 
-                # Count for the time-frame that the note was played
-                next_tick_duration = tick_step_size
+        tick_delay = 0
+        for t, curr_notes in enumerate(melody):
+            curr_pitches = [self.get_midi_pitch(x) for x in curr_notes]
+            curr_articulation = [x.articulated for x in curr_notes]
+            tick_delay += tick_step_size
 
-                # Count further articulations
-                j = i + 1
-                while j < len(notes) - 1 and notes[j].articulated:
-                    next_tick_duration += tick_step_size
-                    j += 1
+            #print("{} {} {}".format(curr_pitches, curr_articulation, tick_step_size))
+            on_events, off_events = [], []
 
-                # Append the end of the note
-                pitch = self.get_midi_pitch(note)
-                off = midi.NoteOffEvent(tick=next_tick_duration, pitch=pitch)
-                track.append(off)
+            some_event = False
+            # generate off events for all pitches that ended
+            for i, pitch in enumerate(previous_pitches):
+                if pitch not in curr_pitches:
+                    off = midi.NoteOffEvent(tick=0 if some_event else tick_delay, pitch=pitch)
+                    off_events.append(off)
 
-                next_tick_start = 0
+                    #print("\toff event for pitch {} for {} ticks".format(pitch, 0 if some_event else tick_delay))
+                    some_event = True
+                    tick_delay = 0
 
-                # Set i to the new position
-                i = j
-                continue
-            elif note.pitch == SILENCE:
-                next_tick_start += tick_step_size
+            # now at the current notes and see which ones have started
+            for pitch, articulation in zip(curr_pitches, curr_articulation):
 
-            i += 1
+                if not articulation:
+                    # current pitch is being played
+
+                    if pitch in previous_pitches:
+                        # special case for when a note is played in succession
+                        # generate an off event for the previous pitch
+                        off = midi.NoteOffEvent(tick=0 if some_event else tick_delay, pitch=pitch)
+                        off_events.append(off)
+                        #print("\toff event for pitch {} for {} ticks".format(pitch, 0 if some_event else tick_delay))
+                        tick_delay = 0
+
+                    # generate an on event for the current pitch
+                    # and keep track of it
+                    on = midi.NoteOnEvent(tick=0 if some_event else tick_delay, velocity=127, pitch=pitch)
+                    on_events.append(on)
+                    #print("\ton event for pitch {} for {} ticks".format(pitch, 0 if some_event else tick_delay))
+
+                    some_event = True
+                    tick_delay = 0
+
+            track.extend(off_events)
+            track.extend(on_events)
+
+            previous_pitches = curr_pitches
+
+            if t > 200:
+                break
 
     def _create_bpm_event(self, melody):
         bpm_event = midi.SetTempoEvent()

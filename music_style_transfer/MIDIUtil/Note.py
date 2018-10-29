@@ -6,7 +6,7 @@ import midi
 class Note:
     def __init__(self,
                  midi_pitch: int = None,
-                 articulated: bool = False):
+                 articulated: bool = True):
 
         if midi_pitch is None:
             # The pitch of the note
@@ -15,9 +15,6 @@ class Note:
             self.octave = 0
         else:
             self.set_from_midi_pitch(midi_pitch)
-
-        # The length of the note
-        self.length = DEF_TICK_STEP_SIZE
 
         # Whether the note is being played or articulated
         self.articulated = articulated
@@ -36,25 +33,23 @@ class Note:
         else:
             return self.octave * N_PITCHES + self.pitch
 
-    def get_length(self):
-        return self.length
-
-    def get_pitch(self):
-        return self.pitch
-
-    def get_octave(self):
-        return self.octave
-
-    # TODO: remove this and let an Embedding class work this out
-    def get_feature(self):
-        result = np.array({self.pitch, self.octave})
-        return result
-
     def __str__(self):
         if self.pitch == SILENCE:
             return "S_" + str(self.octave)
         else:
             return midi.NOTE_NAMES[self.pitch] + "_" + str(self.octave)
+
+    def __cmp__(self, other):
+        return self == other
+
+    def __eq__(self, other):
+        return self.articulated == other.articulated and self.pitch == other.pitch and self.octave == other.octave
+
+    def __neq__(self, other):
+        return not self == other
+
+    def __hash__(self):
+        return hash((self.pitch, self.octave, self.articulated))
 
     def __repr__(self):
         return self.__str__()

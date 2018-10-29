@@ -15,6 +15,12 @@ class Melody:
         self.description = description
         self.notes = []
 
+    def __len__(self):
+        return len(self.notes)
+
+    def __getitem__(self, key):
+        return self.notes[key]
+
     def split_based_on_sequence_length(self, max_length):
         result = []
 

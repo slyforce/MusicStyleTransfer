@@ -12,11 +12,10 @@ class TickInformation:
     Helper class to store which pitch is being played a tick time interval
     '''
 
-    def __init__(self, note=SILENCE, start_tick=0, end_tick=0):
-        self.note = note
-        self.start_tick = start_tick
-        self.end_tick = end_tick
-        self.played = False
+    def __init__(self, notes=None):
+        self.notes = notes
+        if self.notes is None:
+            self.notes = set()
 
 
 class MIDIReader:
@@ -60,81 +59,65 @@ class MIDIReader:
                 bpm=bpm,
                 resolution=resolution,
                 slices_per_quarter=self.slices_per_quarter_note)
-            notes_played, description = self._parse_track(track)
-            new_melody.description = description
-            self._generate_notes(new_melody, notes_played,
-                                 note_window, track[-1].tick)
+            new_melody.notes = self._parse_track(track, note_window)
 
             # Check if the track is too small
             # This can be the case for description tracks
-            if len(new_melody.notes) < 10:
+            if len(new_melody) < 10:
                 print('Warning: {} contains melodies of length {} < 10. Discarding'.format(file_name, len(new_melody.notes)))
                 continue
 
             result.append(new_melody)
 
         assert len(result) > 0
-        return self.clean_melodies(result)
+        return result
 
-    def _generate_notes(self,
-                        melody: Melody,
-                        notes_played: List[TickInformation],
-                        note_window: int,
-                        end_tick: int):
-        melody.notes = []
-        for t in range(0, end_tick, note_window):
-            new_note = Note()
-            junk_elements = []
+    def _parse_track(self, track: midi.Track, tick_step: int):
+        prev_t = 0
+        open_notes = set()
+        newly_open_notes = set()
 
-            for note in notes_played:
-                # We already handled this time point
-                if t >= note.end_tick:
-                    junk_elements.append(note)
-
-                if note.start_tick <= t and t < note.end_tick:
-                    # A note is being played in the time frame
-                    new_note.set_from_midi_pitch(note.note)
-                    melody.notes.append(new_note)
-
-                    # Do not repeat the note if it was already played once
-                    # before
-                    if note.played:
-                        new_note.articulated = True
-
-                    note.played = True
-                    break
-                elif t < note.start_tick:
-                    # We have yet to check if there is a note or silence
-                    new_note.pitch = SILENCE
-                    melody.notes.append(new_note)
-                    break
-
-            # Reduce notes played container
-            for el in junk_elements:
-                notes_played.remove(el)
-
-    def _parse_track(self, track: midi.Track):
         notes_played = []
-        description = ''
-        track.make_ticks_abs()
         for event in track:
+            cur_t = prev_t + event.tick
+
+            self._write_pitches_being_played(cur_t, open_notes, newly_open_notes, prev_t, notes_played, tick_step)
+
             if (isinstance(event, midi.NoteOnEvent)
                     or isinstance(event, midi.NoteOffEvent)):
-                velocity = event.data[1]
+                [note, velocity] = event.data
                 if velocity > 0:
                     # We got the duration of the pitch last played
-                    tick_information = TickInformation()
-                    tick_information.note = event.data[0]
-                    tick_information.start_tick = event.tick
+                    newly_open_notes.add(Note(note, articulated=False))
 
                 elif velocity == 0:
                     # This gives us the duration of the pitch
-                    tick_information.end_tick = event.tick
-                    notes_played.append(tick_information)
-            elif isinstance(event, midi.TrackNameEvent):
-                description = event.text
+                    for open_note in open_notes:
+                        if open_note.get_midi_index() == note:
+                            open_notes.remove(open_note)
+                            break
+            else:
+                continue
 
-        return notes_played, description
+            prev_t = cur_t
+
+        return notes_played
+
+    def _write_pitches_being_played(self, cur_t, open_notes, newly_open_notes, prev_t, tick_infos, tick_step):
+        start_tick = prev_t - (prev_t % tick_step)
+        end_tick = cur_t - (cur_t % tick_step)
+
+        for t in range(start_tick, end_tick, tick_step):
+
+            notes_being_played = open_notes.copy()
+
+            for note in newly_open_notes:
+                notes_being_played.add(note)
+                open_notes.add(Note(midi_pitch=note.get_midi_index(), articulated=True))
+
+            newly_open_notes.clear()
+
+            tick_infos.append(notes_being_played)
 
     def clean_melodies(self, melodies):
         result = []
@@ -145,6 +128,8 @@ class MIDIReader:
         return result
 
     def remove_silence(self, melody):
+        # todo: needs to be adapted to sets of notes
+        raise NotImplemented
         junk_indices = []
 
         # Accumulate silence at the beginning of the melody
@@ -185,3 +170,4 @@ class MIDIReader:
         # Note that the list must be reversed to be able to pop correctly
         for i in reversed(junk_indices):
             melody.notes.pop(i)
+
