@@ -24,8 +24,8 @@ def create_toy_model_config(data):
 
 def create_toy_train_config():
     config = trainer.TrainConfig(batch_size=1,
-                                 sampling_frequency=0,
-                                 checkpoint_frequency=100000000,
+                                 sampling_frequency=500,
+                                 checkpoint_frequency=1000,
                                  num_checkpoints_not_improved=-1,
                                  kl_loss=0.0,
                                  optimizer=trainer.OptimizerConfig(

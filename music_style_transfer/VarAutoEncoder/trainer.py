@@ -95,7 +95,7 @@ class Trainer:
 
     def _initialize_model(self):
         self.model.initialize(mx.init.Xavier(), ctx=self.context)
-        #self.model.hybridize()
+        self.model.hybridize()
 
     def _initialize_metrics(self):
         def mean(_, pred):
@@ -107,8 +107,8 @@ class Trainer:
         self.tokens_metric_bce = mx.metric.CustomMetric(mean, name='tokens_bce')
         self.tokens_metric_acc =  mx.metric.CustomMetric(accuracy, name='tokens_acc')
 
-        self.arti_metric_bce = mx.metric.CustomMetric(mean, name='tokens_bce')
-        self.arti_metric_acc =  mx.metric.CustomMetric(accuracy, name='tokens_acc')
+        self.arti_metric_bce = mx.metric.CustomMetric(mean, name='arti_bce')
+        self.arti_metric_acc =  mx.metric.CustomMetric(accuracy, name='arti_acc')
 
         self.kl_metric = mx.metric.CustomMetric(mean, name='kl_loss')
         self.main_metric = mx.metric.CustomMetric(mean, name='total_loss')
@@ -190,8 +190,8 @@ class Trainer:
         self.tokens_metric_bce.update(mx.nd.ones_like(tk_loss), tk_loss)
         self.tokens_metric_acc.update(tokens, tokens_out)
 
-        self.arti_metric_acc.update(articulations, articulations_out)
         self.arti_metric_bce.update(mx.nd.ones_like(art_loss), art_loss)
+        self.arti_metric_acc.update(articulations, articulations_out)
 
         self.kl_metric.update(mx.nd.ones_like(kl_loss), kl_loss)
         self.main_metric.update(mx.nd.ones_like(loss), loss)
@@ -219,6 +219,7 @@ class Trainer:
                                                                                  classes,
                                                                                  self._generate_var_ae_noise(batch_size, seq_len),
                                                                                  tokens)
+
             self._update_metrics(loss, *sep_losses,
                                  tokens, articulations,
                                  *outputs)
