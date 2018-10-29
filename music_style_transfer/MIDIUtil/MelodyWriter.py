@@ -80,9 +80,6 @@ class MelodyWriter:
 
             previous_pitches = curr_pitches
 
-            if t > 200:
-                break
-
     def _create_bpm_event(self, melody):
         bpm_event = midi.SetTempoEvent()
         bpm_event.set_bpm(melody.bpm)
