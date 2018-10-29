@@ -1,7 +1,7 @@
 from time import time
 from mxboard import *
 
-from . import model, loss, utils
+from . import model, loss, utils, sampler
 from music_style_transfer.MIDIUtil.MelodyWriter import MelodyWriter
 
 import mxnet as mx
@@ -65,6 +65,7 @@ class Trainer:
         self.config = config
         self.context = context
         self.model = model
+        self.sampler = sampler.Sampler(model=self.model, context=self.context)
 
         self._initialize_model()
         self._initialize_optimizers()
@@ -134,8 +135,10 @@ class Trainer:
                 self.train_state.n_batches += 1
                 if self.train_state.n_batches % 50 == 0:
                     self._periodic_log(epoch, start_time)
-                    #if samples_output_path is not None and self.config.sampling_frequency > 0 and self.train_state.n_batches % self.config.sampling_frequency == 0 :
-                    #    raise NotImplemented
+
+                if samples_output_path is not None and self.config.sampling_frequency > 0 and self.train_state.n_batches % self.config.sampling_frequency == 0:
+                    print("Generating samples with prefix {}".format(samples_output_path + '/iter-{}'.format(self.train_state.n_batches)))
+                    self.sampler.sample_batch(batch, dataset.num_classes(), samples_output_path + '/iter-{}'.format(self.train_state.n_batches))
 
                 if self.train_state.n_batches % self.config.checkpoint_frequency == 0:
                     self._checkpoint(model_folder, validation_dataset)
