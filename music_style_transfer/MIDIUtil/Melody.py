@@ -42,7 +42,7 @@ class Melody:
         assert(len(result) != 0)
 
         for i in reversed(range(len(result))):
-            if all([note.is_silence() for note in result[i].notes]):
+            if all([len(note) == 0 for note in result[i].notes]):
                 # all notes are silence
                 result.pop(i)
 

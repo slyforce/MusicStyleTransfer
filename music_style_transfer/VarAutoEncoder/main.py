@@ -94,21 +94,16 @@ def main():
     train_dataset, valid_dataset = load_dataset(loader.melodies, args.validation_split, args.batch_size)
 
     create_directory_if_not_present(args.model_output)
-    create_directory_if_not_present(args.model_output + '/decoder/')
-    create_directory_if_not_present(args.model_output + '/encoder/')
     create_directory_if_not_present(args.out_samples)
 
-    d_config, e_config = create_model_config(args, train_dataset)
-    d_config.save(args.model_output + '/decoder/config')
-    e_config.save(args.model_output + '/encoder/config')
+    config = create_model_config(args, train_dataset)
+    config.save(args.model_output + '/config')
 
-    decoder = model.Decoder(config=d_config)
-    encoder = model.Encoder(config=e_config)
+    m = model.EncoderDecoder(config=config)
 
     t = trainer.Trainer(config=create_train_config(args),
                         context=mx.gpu() if args.gpu else mx.cpu(),
-                        decoder=decoder,
-                        encoder=encoder)
+                        model=m)
 
     t.fit(dataset=train_dataset,
           validation_dataset=valid_dataset,

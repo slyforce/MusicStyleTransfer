@@ -94,15 +94,14 @@ class Trainer:
 
     def _initialize_model(self):
         self.model.initialize(mx.init.Xavier(), ctx=self.context)
-        self.model.hybridize()
+        #self.model.hybridize()
 
     def _initialize_metrics(self):
         def mean(_, pred):
             return pred.sum(), pred.size
 
         def accuracy(labels, pred):
-            pred = 1. / (1 + np.exp( -1 * pred ))
-            return ((pred > 0.5) == labels).sum(), labels.size
+            return ((pred > 0.) == labels).sum(), labels.size
 
         self.tokens_metric_bce = mx.metric.CustomMetric(mean, name='tokens_bce')
         self.tokens_metric_acc =  mx.metric.CustomMetric(accuracy, name='tokens_acc')
@@ -110,15 +109,8 @@ class Trainer:
         self.arti_metric_bce = mx.metric.CustomMetric(mean, name='tokens_bce')
         self.arti_metric_acc =  mx.metric.CustomMetric(accuracy, name='tokens_acc')
 
-        self.kl_metric = mx.metric.CompositeEvalMetric(
-            [mx.metric.CustomMetric(mean)],
-            name='kl_loss'
-        )
-
-        self.main_metric = mx.metric.CompositeEvalMetric(
-            [mx.metric.CustomMetric(mean)],
-            name='total_loss'
-        )
+        self.kl_metric = mx.metric.CustomMetric(mean, name='kl_loss')
+        self.main_metric = mx.metric.CustomMetric(mean, name='total_loss')
 
         self.metrics = [self.tokens_metric_bce, self.tokens_metric_acc,
                         self.arti_metric_bce, self.arti_metric_acc,
@@ -142,8 +134,8 @@ class Trainer:
                 self.train_state.n_batches += 1
                 if self.train_state.n_batches % 50 == 0:
                     self._periodic_log(epoch, start_time)
-                    if samples_output_path is not None and self.config.sampling_frequency > 0 and self.train_state.n_batches % self.config.sampling_frequency == 0 :
-                        raise NotImplemented
+                    #if samples_output_path is not None and self.config.sampling_frequency > 0 and self.train_state.n_batches % self.config.sampling_frequency == 0 :
+                    #    raise NotImplemented
 
                 if self.train_state.n_batches % self.config.checkpoint_frequency == 0:
                     self._checkpoint(model_folder, validation_dataset)
@@ -155,7 +147,7 @@ class Trainer:
                     print("Checkpoint [{}]  {}\n".format(self.train_state.n_checkpoints, self._metric_to_string_output(self.train_state.n_batches)))
 
     def _step(self, batch):
-        [tokens, articulations, classes] = batch.data
+        [tokens, articulations, classes] = [x.as_in_context(self.context) for x in batch.data]
         (batch_size, seq_len, _) = tokens.shape
 
         noise = self._generate_var_ae_noise(batch_size, seq_len)
@@ -195,18 +187,17 @@ class Trainer:
         self.tokens_metric_bce.update(mx.nd.ones_like(tk_loss), tk_loss)
         self.tokens_metric_acc.update(tokens, tokens_out)
 
-        self.arti_metric_acc.update(mx.nd.ones_like(art_loss), art_loss)
-        self.arti_metric_bce.update(articulations, articulations_out)
+        self.arti_metric_acc.update(articulations, articulations_out)
+        self.arti_metric_bce.update(mx.nd.ones_like(art_loss), art_loss)
 
         self.kl_metric.update(mx.nd.ones_like(kl_loss), kl_loss)
         self.main_metric.update(mx.nd.ones_like(loss), loss)
 
     def _generate_var_ae_noise(self, batch_size, seq_len):
-        noise = mx.nd.random_normal(loc=0.,
-                                    scale=1.,
-                                    shape=(batch_size, seq_len, self.model.config.latent_dimension),
-                                    ctx=self.context)
-        return noise
+        return mx.nd.random_normal(loc=0.,
+                                   scale=1.,
+                                   shape=(batch_size, seq_len, self.model.config.latent_dimension),
+                                   ctx=self.context)
 
     def _checkpoint(self, model_folder, validation_dataset):
         self.train_state.n_checkpoints += 1
@@ -222,7 +213,7 @@ class Trainer:
             art_loss, kl_loss, loss, tk_loss = self._forward_pass_with_loss_computation(articulations, classes, noise, tokens)
             self._update_metrics(art_loss, articulations, kl_loss, loss, tk_loss)
 
-        r_loss = self.main_metric.get_metric(0).get()[1]
+        r_loss = self.main_metric.get()[1]
         if r_loss < self.train_state.best_resconstruction_loss:
             print("Loss improved from {} to {}.".format(self.train_state.best_resconstruction_loss,
                                                         r_loss))
@@ -237,11 +228,10 @@ class Trainer:
     def _metric_to_string_output(self, n_batches):
         out = ''
         for metric in self.metrics:
-            loss_name = metric.name
             for metric_name, val in metric.get_name_value():
-                self.summary_writer.add_scalar(tag="{}_{}".format(loss_name, metric_name),
+                self.summary_writer.add_scalar(tag="{}".format(metric_name),
                                                value=val, global_step=n_batches)
-                out += '{}_{}={:.3f} '.format(loss_name, metric_name, val)
+                out += '{}={:.3f} '.format(metric_name, val)
 
             metric.reset()
         return out

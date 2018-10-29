@@ -88,7 +88,7 @@ class ToyData(Dataset):
                                                              [3, 4, 5, 0]]).one_hot(depth=self.num_tokens()),
                                        'data1': mx.nd.array([[1, 1, 1, 0],
                                                              [0, 1, 0, 0],
-                                                             [1, 1, 0, 0]]),
+                                                             [1, 1, 0, 0]]).one_hot(depth=self.num_tokens()),
                                        'data2': mx.nd.array([0,1,2])},
                                         batch_size=self.batch_size, shuffle=False)
     def num_classes(self):
@@ -124,10 +124,14 @@ class MelodyDataset(Dataset):
         for melodies in self.melodies.values():
             max_seq_lens += [max([len(x.notes) for x in melodies])]
         self.max_sequence_length = max(max_seq_lens)
-        self._get_class_arrays()
+
         self._get_token_arrays()
+        self._get_articulation_arrays()
+        self._get_class_arrays()
+
         self.iter = mx.io.NDArrayIter({'data0': self.tokens,
-                                       'data1': self.classes},
+                                       'data1': self.articulations,
+                                       'data2': self.classes},
                                       batch_size=self.batch_size, shuffle=True)
 
     def _log_dataset(self):
@@ -154,20 +158,38 @@ class MelodyDataset(Dataset):
         arrays_concat = np.concatenate(arrays, axis=0)
         self.classes = mx.nd.array(arrays_concat)
 
-    def _get_token_arrays(self):
-
-        arrays = []
+    def _get_articulation_arrays(self):
+        articulation_arrays = []
         for melodies in self.melodies.values():
-            a = np.zeros((len(melodies), self.max_sequence_length, 2))
+            articulations = np.zeros((len(melodies), self.max_sequence_length, self.num_tokens()))
             for i, melody in enumerate(melodies):
-                # +1 due to masking
-                a[i, :len(melody.notes), 0] = np.array([n.get_midi_index() + self.mask_offset for n in melody.notes])
-                a[i, :len(melody.notes), 1] = np.array([1 if n.articulated else 0 for n in melody.notes])
+                for j, notes in enumerate(melody):
+                    for note in notes:
+                        articulations[i, j, note.get_midi_index() + self.mask_offset] = 1 if note.articulated else 0
 
-            arrays.append(a)
+            articulation_arrays.append(articulations)
 
-        arrays_concat = np.concatenate(arrays, axis=0)
-        self.tokens = mx.nd.array(arrays_concat)
+        articulation_arrays_concat = np.concatenate(articulation_arrays, axis=0)
+
+        self.articulations = mx.nd.array(articulation_arrays_concat)
+
+    def _get_token_arrays(self):
+        token_arrays = []
+        for melodies in self.melodies.values():
+            tokens = np.zeros((len(melodies), self.max_sequence_length, self.num_tokens()))
+
+            # TODO: somehow optimize
+            # this looks horribly inefficient...
+            for i, melody in enumerate(melodies):
+                for j, notes in enumerate(melody):
+                    for note in notes:
+                        tokens[i, j, note.get_midi_index() + self.mask_offset] = 1.
+
+            token_arrays.append(tokens)
+
+        token_arrays_concat = np.concatenate(token_arrays, axis=0)
+
+        self.tokens = mx.nd.array(token_arrays_concat)
 
     def __iter__(self):
         self.iter.reset()

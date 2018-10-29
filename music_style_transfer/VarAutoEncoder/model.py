@@ -39,8 +39,8 @@ class EncoderDecoder(mx.gluon.HybridBlock):
         with self.name_scope():
 
             self.initial_conv = mx.gluon.nn.Conv2D(channels=32,
-                                                   kernel_size=(1, self.config.feature_dimension + 1),
-                                                   strides=(1, self.config.feature_dimension + 1),
+                                                   kernel_size=(1, self.config.feature_dimension),
+                                                   strides=(1, self.config.feature_dimension),
                                                    padding=(0, 0),
                                                    layout='NCHW')
             self.encoder = mx.gluon.nn.HybridSequential()
@@ -67,42 +67,27 @@ class EncoderDecoder(mx.gluon.HybridBlock):
                                  input_size=input_size,
                                  layout='NTC'))
                 self.decoder.add(mx.gluon.nn.LayerNorm())
-            self.decoder.add(Dense(self.config.feature_dimension + 1,
+            self.decoder.add(Dense(self.config.feature_dimension * 2,
                                    flatten=False,
                                    in_units=self.config.decoder_config.hidden_dim))
 
             pass
 
-    def hybrid_forward(self, F, melodies, articulations, enc_classes, dec_classes, noise):
+    def hybrid_forward(self, F, tokens, articulations, enc_classes, dec_classes, noise):
         # melodies: shape: (batch_size, seq_len, feature_dim)
-        # articulations: shape: (batch_size, seq_len)
+        # articulations: shape: (batch_size, seq_len, feature_dim)
         # enc_classes: shape: (batch_size)
         # dec_classes: shape: (batch_size)
         # noise: shape: (batch_size, seq_len, noise_dim)
 
-        # shape: (batch_size, seq_len, 1)
-        articulations = F.expand_dims(articulations, axis=2)
-        # shape: (batch_size, seq_len, feature_dim + 1)
-        melodies = F.concat(melodies, articulations, dim=2)
-
-        # shape: (batch_size, 1, seq_len, feature_dim + 1)
-        x = F.expand_dims(melodies, axis=1)
+        dec_classes, enc_classes = self._preprocess_classes(F, dec_classes, enc_classes, tokens)
+        tokens, x = self._preprocess_inputs(F, articulations, tokens)
 
         # shape: (batch_size, hidden_dim, seq_len)
         x = F.squeeze(self.initial_conv(x), axis=3)
 
         # shape: (batch_size, seq_len, hidden_dim)
         x = F.swapaxes(x, dim1=1, dim2=2)
-
-        # shape: (batch_size, 1)
-        enc_classes = F.expand_dims(enc_classes, axis=1)
-        # shape: (batch_size, seq_len)
-        enc_classes = F.broadcast_like(enc_classes, melodies.sum(axis=2), lhs_axes=(1,), rhs_axes=(1,))
-
-        # shape: (batch_size, 1)
-        dec_classes = F.expand_dims(dec_classes, axis=1)
-        # shape: (batch_size, seq_len)
-        dec_classes = F.broadcast_like(dec_classes, melodies.sum(axis=2), lhs_axes=(1,), rhs_axes=(1,))
 
         # shape: (batch_size, seq_len, hidden_dim + input_classes)
         x = F.concat(x, self.one_hot(F, enc_classes), dim=2)
@@ -117,11 +102,31 @@ class EncoderDecoder(mx.gluon.HybridBlock):
         # shape: (batch_size, seq_len, feature_dim + 1)
         z = self.decoder(z)
 
-        out_pitches = F.slice(z, begin=(0,0,0), end=(None,None,-1))
-        out_articulations = F.slice(z, begin=(0,0,-1), end=(None,None,None))
-        out_articulations = F.squeeze(out_articulations)
-
+        [out_pitches, out_articulations] = F.split(z, num_outputs=2, axis=2)
         return out_pitches, out_articulations, z_means, z_stddev
+
+    def _preprocess_classes(self, F, dec_classes, enc_classes, tokens):
+        # shape: (batch_size, 1)
+        enc_classes = F.expand_dims(enc_classes, axis=1)
+        # shape: (batch_size, seq_len)
+        enc_classes = F.broadcast_like(enc_classes, tokens.sum(axis=2), lhs_axes=(1,), rhs_axes=(1,))
+        # shape: (batch_size, 1)
+        dec_classes = F.expand_dims(dec_classes, axis=1)
+        # shape: (batch_size, seq_len)
+        dec_classes = F.broadcast_like(dec_classes, tokens.sum(axis=2), lhs_axes=(1,), rhs_axes=(1,))
+        return dec_classes, enc_classes
+
+    def _preprocess_inputs(self, F, articulations, melodies):
+        # shape: (batch_size, seq_len, feature_dim)
+        articulations = F.expand_dims(articulations, axis=3)
+        melodies = F.expand_dims(melodies, axis=3)
+        # shape: (batch_size, seq_len, feature_dim, 2)
+        melodies = F.concat(melodies, articulations, dim=3)
+        # shape: (batch_size, 2, feature_dim, seq_len)
+        x = F.swapaxes(melodies, dim1=1, dim2=3)
+        # shape: (batch_size, 2, seq_len, feature_dim)
+        x = F.swapaxes(x, dim1=2, dim2=3)
+        return melodies, x
 
     def one_hot(self, F, input):
         return F.one_hot(
