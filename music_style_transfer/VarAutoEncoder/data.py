@@ -1,10 +1,10 @@
 import numpy as np
 import mxnet as mx
 
-from ..MIDIUtil.defaults import *
-from ..MIDIUtil.MIDIReader import MIDIReader
-from ..MIDIUtil.RangeRestrictor import GuitarRangeRestrictor, BassRangeRestrictor, RangeRestrictor
-from ..MIDIUtil.Melody import Melody
+from MIDIUtil.defaults import *
+from MIDIUtil.MIDIReader import MIDIReader
+from MIDIUtil.RangeRestrictor import GuitarRangeRestrictor, BassRangeRestrictor, RangeRestrictor
+from MIDIUtil.Melody import Melody
 
 from typing import Dict, List
 

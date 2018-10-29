@@ -1,16 +1,12 @@
 import mxnet as mx
-
-from music_style_transfer.MIDIUtil.MelodyWriter import MelodyWriter
+from VarAutoEncoder.data import Loader, MelodyDataset
 from music_style_transfer.MIDIUtil.Melody import Melody
+from music_style_transfer.MIDIUtil.MelodyWriter import MelodyWriter
 from music_style_transfer.MIDIUtil.Note import Note
-
-from music_style_transfer.GAN.data import Loader, MelodyDataset
-
 from . import config
 from . import model
 from . import utils
 
-import os
 
 def load_model(model_folder: str,
                context: mx.Context,

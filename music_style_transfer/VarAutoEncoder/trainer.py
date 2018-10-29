@@ -1,14 +1,13 @@
 from time import time
-from mxboard import *
-
-from . import model, loss, utils, sampler
-from music_style_transfer.MIDIUtil.MelodyWriter import MelodyWriter
 
 import mxnet as mx
 import numpy as np
-from music_style_transfer.GAN import data
+from VarAutoEncoder import data
+from mxboard import *
 from mxnet import autograd
 from mxnet import gluon
+from . import model, loss, utils, sampler
+
 
 class OptimizerConfig:
     def __init__(self,

@@ -1,10 +1,10 @@
-from music_style_transfer.GAN.data import ToyData, MelodyDataset, Loader, Dataset, load_dataset
+import mxnet as mx
+from VarAutoEncoder.data import ToyData, Loader, Dataset, load_dataset
 from music_style_transfer.VarAutoEncoder import model
 from music_style_transfer.VarAutoEncoder import trainer
 from .config import get_config
 from .utils import create_directory_if_not_present
-import os
-import mxnet as mx
+
 
 def create_toy_model_config(data):
     return model.EncoderDecoderConfig(
