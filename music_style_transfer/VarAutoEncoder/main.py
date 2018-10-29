@@ -6,39 +6,28 @@ from .utils import create_directory_if_not_present
 import os
 import mxnet as mx
 
-def create_toy_model_configs(data):
-    decoder_config = model.DecoderConfig(
+def create_toy_model_config(data):
+    return model.EncoderDecoderConfig(
+        latent_dimension=16,
         encoder_config=model.LSTMConfig(
             n_layers=1,
             hidden_dim=32,
             dropout=0.0),
-        output_layer_config=model.OutputLayerConfig(
-            output_dim=data.num_tokens()),
-        latent_dimension=16,
-        input_classes=data.num_classes()
-    )
-
-    encoder_config = model.EncoderConfig(
-        encoder_config=model.LSTMConfig(
+        decoder_config=model.LSTMConfig(
             n_layers=1,
             hidden_dim=32,
             dropout=0.0),
-        embedding_config=model.EmbeddingConfig(
-            input_dim=data.num_tokens(),
-            hidden_dim=8,
-            mask_zero=True),
-        latent_dimension=16,
+        feature_dimension=data.num_tokens(),
         input_classes=data.num_classes()
     )
-
-    return decoder_config, encoder_config
 
 
 def create_toy_train_config():
     config = trainer.TrainConfig(batch_size=1,
-                                 sampling_frequency=500,
-                                 checkpoint_frequency=500,
+                                 sampling_frequency=0,
+                                 checkpoint_frequency=100000000,
                                  num_checkpoints_not_improved=-1,
+                                 kl_loss=0.0,
                                  optimizer=trainer.OptimizerConfig(
                                      learning_rate=1e-4,
                                      optimizer='adam',
@@ -61,50 +50,33 @@ def create_train_config(args):
     return config
 
 
-def create_model_configs(args, dataset: Dataset):
-    decoder_config = model.DecoderConfig(
-        encoder_config=model.LSTMConfig(
-            n_layers=args.d_n_layers,
-            hidden_dim=args.d_rnn_hidden_dim,
-            dropout=args.d_dropout),
-        output_layer_config=model.OutputLayerConfig(
-            output_dim=dataset.num_tokens()),
+def create_model_config(args, dataset: Dataset):
+    return model.EncoderDecoderConfig(
         latent_dimension=args.latent_dim,
-        input_classes=dataset.num_classes()
-    )
-
-    encoder_config = model.EncoderConfig(
         encoder_config=model.LSTMConfig(
             n_layers=args.e_n_layers,
             hidden_dim=args.e_rnn_hidden_dim,
             dropout=args.e_dropout),
-        embedding_config=model.EmbeddingConfig(
-            input_dim=dataset.num_tokens(),
-            hidden_dim=args.e_emb_hidden_dim,
-            mask_zero=True),
-        latent_dimension=args.latent_dim,
+        decoder_config=model.LSTMConfig(
+            n_layers=args.d_n_layers,
+            hidden_dim=args.d_rnn_hidden_dim,
+            dropout=args.d_dropout),
+        feature_dimension=dataset.num_tokens(),
         input_classes=dataset.num_classes()
     )
 
-    return decoder_config, encoder_config
-
-
 def main_toy():
-    dataset = ToyData(1)
-    #dataset = ToyDataV2(1)
+    dataset = ToyData()
 
-    d_config, e_config = create_toy_model_configs(dataset)
-
-    decoder = model.Decoder(config=d_config)
-    encoder = model.Encoder(config=e_config)
+    m = model.EncoderDecoder(config=create_toy_model_config(dataset))
 
     t = trainer.Trainer(config=create_toy_train_config(),
                         context=mx.cpu(),
-                        decoder=decoder,
-                        encoder=encoder)
+                        model=m)
 
     t.fit(dataset=dataset,
           validation_dataset=dataset,
+          model_folder='/tmp/out',
           epochs=20000,
           samples_output_path='/tmp/out')
 
@@ -126,7 +98,7 @@ def main():
     create_directory_if_not_present(args.model_output + '/encoder/')
     create_directory_if_not_present(args.out_samples)
 
-    d_config, e_config = create_model_configs(args, train_dataset)
+    d_config, e_config = create_model_config(args, train_dataset)
     d_config.save(args.model_output + '/decoder/config')
     e_config.save(args.model_output + '/encoder/config')
 

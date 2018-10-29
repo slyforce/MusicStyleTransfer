@@ -80,14 +80,17 @@ class Dataset:
 
 class ToyData(Dataset):
     def __init__(self,
-                 batch_size: int):
+                 batch_size: int = 3):
         super(ToyData, self).__init__(batch_size)
-        self.batch_size = 3
+        self.batch_size = batch_size
         self.iter = mx.io.NDArrayIter({'data0': mx.nd.array([[1, 2, 3, 0],
                                                              [2, 3, 4, 0],
-                                                             [3, 4, 5, 0]]),
-                                        'data1': mx.nd.array([0,1,2])},
-                                         batch_size=self.batch_size, shuffle=False)
+                                                             [3, 4, 5, 0]]).one_hot(depth=self.num_tokens()),
+                                       'data1': mx.nd.array([[1, 1, 1, 0],
+                                                             [0, 1, 0, 0],
+                                                             [1, 1, 0, 0]]),
+                                       'data2': mx.nd.array([0,1,2])},
+                                        batch_size=self.batch_size, shuffle=False)
     def num_classes(self):
         return 3
 
