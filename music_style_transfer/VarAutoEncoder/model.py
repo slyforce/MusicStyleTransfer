@@ -1,8 +1,6 @@
 import mxnet as mx
 from mxnet.gluon.rnn import LSTM
-from mxnet.gluon.nn import Dense, Embedding
-
-from typing import Tuple
+from mxnet.gluon.nn import Dense
 
 from .config import Config
 

@@ -90,6 +90,7 @@ class Sampler:
 
             melody.notes.append(notes)
 
+        utils.visualize_melody(melody)
         return melody
 
 if __name__ == '__main__':
