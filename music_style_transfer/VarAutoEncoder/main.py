@@ -33,7 +33,8 @@ def create_toy_train_config():
                                      optimizer='adam',
                                      optimizer_params = 'clip_gradient:1.0',
                                  ),
-                                 label_smoothing=0.0)
+                                 label_smoothing=0.0,
+                                 positive_label_upscaling=True)
     return config
 
 
@@ -48,7 +49,8 @@ def create_train_config(args):
                                      optimizer=args.optimizer,
                                      optimizer_params=args.optimizer_params,
                                  ),
-                                 label_smoothing=args.label_smoothing)
+                                 label_smoothing=args.label_smoothing,
+                                 positive_label_upscaling=args.positive_label_upscaling)
     return config
 
 

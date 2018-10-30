@@ -19,18 +19,23 @@ class BinaryCrossEntropy(mx.gluon.loss.Loss):
         self.positive_label_upweighting = positive_label_upweighting
 
     def _apply_label_smoothing(self, label):
+        # label smoothing with binary labels -> each has a 50% probability
         return (1.-self.label_smoothing) * label + self.label_smoothing * 0.5
 
     def hybrid_forward(self, F, pred, label):
 
         if not self._from_sigmoid:
+            # apply sigmoid if necessary
             pred = F.sigmoid(pred)
 
         s_label = self._apply_label_smoothing(label)
 
+        # binary cross entropy with the smoothed labels
+        # epsilon normalization term to not take the log of 0
         bce = -1 * (s_label * F.log(1e-12 + pred) + (1-s_label) * F.log(1e-12 + (1. - pred)))
 
         if self.positive_label_upweighting:
+            # scale up the loss values for positive labels
             bce = F.where(label == 1.,
                           F.broadcast_mul(self._calculate_batchwise_upweighting(F, label), bce) * bce,
                           bce)

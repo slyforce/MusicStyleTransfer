@@ -41,7 +41,8 @@ class TrainConfig:
                  num_checkpoints_not_improved: int,
                  optimizer: OptimizerConfig,
                  kl_loss: float,
-                 label_smoothing: float):
+                 label_smoothing: float,
+                 positive_label_upscaling: bool):
         self.batch_size = batch_size
         self.sampling_frequency = sampling_frequency
         self.checkpoint_frequency = checkpoint_frequency
@@ -49,6 +50,7 @@ class TrainConfig:
         self.optimizer = optimizer
         self.kl_loss_weight = kl_loss
         self.label_smoothing = label_smoothing
+        self.positive_label_upscaling = positive_label_upscaling
 
 class TrainingState:
     def __init__(self):
@@ -78,12 +80,12 @@ class Trainer:
     def _initialize_losses(self):
         self.token_loss = loss.BinaryCrossEntropy(from_sigmoid=False,
                                                   label_smoothing=self.config.label_smoothing,
-                                                  positive_label_upweighting=True)
-        #self.token_loss.hybridize()
+                                                  positive_label_upweighting=self.config.positive_label_upscaling)
+        self.token_loss.hybridize()
 
         self.art_loss = loss.BinaryCrossEntropy(from_sigmoid=False,
                                                 label_smoothing=self.config.label_smoothing,
-                                                positive_label_upweighting=False)
+                                                positive_label_upweighting=self.config.positive_label_upscaling)
         self.art_loss.hybridize()
 
         self.kl_loss = loss.VariationalKLLoss()
