@@ -32,7 +32,8 @@ def create_toy_train_config():
                                      learning_rate=1e-4,
                                      optimizer='adam',
                                      optimizer_params = 'clip_gradient:1.0',
-                                 ))
+                                 ),
+                                 label_smoothing=0.0)
     return config
 
 
@@ -46,7 +47,8 @@ def create_train_config(args):
                                      learning_rate=args.learning_rate,
                                      optimizer=args.optimizer,
                                      optimizer_params=args.optimizer_params,
-                                 ))
+                                 ),
+                                 label_smoothing=args.label_smoothing)
     return config
 
 

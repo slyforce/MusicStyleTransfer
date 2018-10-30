@@ -40,13 +40,15 @@ class TrainConfig:
                  checkpoint_frequency: int,
                  num_checkpoints_not_improved: int,
                  optimizer: OptimizerConfig,
-                 kl_loss: float):
+                 kl_loss: float,
+                 label_smoothing: float):
         self.batch_size = batch_size
         self.sampling_frequency = sampling_frequency
         self.checkpoint_frequency = checkpoint_frequency
         self.num_checkpoints_not_improved = num_checkpoints_not_improved
         self.optimizer = optimizer
         self.kl_loss_weight = kl_loss
+        self.label_smoothing = label_smoothing
 
 class TrainingState:
     def __init__(self):
@@ -74,10 +76,14 @@ class Trainer:
         self.summary_writer = SummaryWriter(logdir='/tmp/out', flush_secs=5)
 
     def _initialize_losses(self):
-        self.token_loss = mx.gluon.loss.SigmoidBinaryCrossEntropyLoss(batch_axis=0, from_sigmoid=False)
-        self.token_loss.hybridize()
+        self.token_loss = loss.BinaryCrossEntropy(from_sigmoid=False,
+                                                  label_smoothing=self.config.label_smoothing,
+                                                  positive_label_upweighting=True)
+        #self.token_loss.hybridize()
 
-        self.art_loss = mx.gluon.loss.SigmoidBinaryCrossEntropyLoss(batch_axis=0, from_sigmoid=False)
+        self.art_loss = loss.BinaryCrossEntropy(from_sigmoid=False,
+                                                label_smoothing=self.config.label_smoothing,
+                                                positive_label_upweighting=False)
         self.art_loss.hybridize()
 
         self.kl_loss = loss.VariationalKLLoss()

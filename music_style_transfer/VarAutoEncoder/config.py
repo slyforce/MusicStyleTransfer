@@ -43,7 +43,9 @@ train_arg.add_argument('--learning-rate', type=float, default=3e-4)
 train_arg.add_argument('--optimizer', type=str, default='adam')
 train_arg.add_argument('--optimizer-params', type=str, default='')
 train_arg.add_argument('--validation-split', type=float, default=0.1)
-train_arg.add_argument('--kl-loss', type=float, default=0.5)
+train_arg.add_argument('--kl-loss', type=float, default=1.0)
+train_arg.add_argument('--label-smoothing', type=float, default=0.0)
+
 
 # Misc
 misc_arg = add_argument_group('Misc')

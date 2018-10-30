@@ -9,3 +9,55 @@ class VariationalKLLoss(mx.gluon.loss.Loss):
         kl_loss_dimension_sum = F.sum(kl_loss, axis=2)
         kl_loss_sequence_mean = F.mean(kl_loss_dimension_sum, axis=1)
         return kl_loss_sequence_mean
+
+
+class BinaryCrossEntropy(mx.gluon.loss.Loss):
+    def __init__(self, from_sigmoid=False, label_smoothing=0.0, positive_label_upweighting=True):
+        super().__init__(weight=1.0, batch_axis=0)
+        self._from_sigmoid = from_sigmoid
+        self.label_smoothing = label_smoothing
+        self.positive_label_upweighting = positive_label_upweighting
+
+    def _apply_label_smoothing(self, label):
+        return (1.-self.label_smoothing) * label + self.label_smoothing * 0.5
+
+    def hybrid_forward(self, F, pred, label):
+
+        if not self._from_sigmoid:
+            pred = F.sigmoid(pred)
+
+        s_label = self._apply_label_smoothing(label)
+
+        bce = -1 * (s_label * F.log(1e-12 + pred) + (1-s_label) * F.log(1e-12 + (1. - pred)))
+
+        if self.positive_label_upweighting:
+            bce = F.where(label == 1.,
+                          F.broadcast_mul(self._calculate_batchwise_upweighting(F, label), bce) * bce,
+                          bce)
+
+        return F.mean(bce, axis=0, exclude=True)
+
+    def _calculate_batchwise_upweighting(self, F, label):
+
+        # determine values of labels
+        positive_labels = F.where(label == 1.,
+                                  F.ones_like(label),
+                                  F.zeros_like(label))
+        negative_labels = F.where(label == 1.,
+                                  F.zeros_like(label),
+                                  F.ones_like(label))
+
+        # sum up values batch-wise
+        n_positives = positive_labels.sum(axis=0, exclude=True)
+        n_negatives = negative_labels.sum(axis=0, exclude=True)
+
+        # calculate the ratio of negative to positive samples
+        # it's possible for there to be no positive samples therefore add an epsilon term
+        upweight = n_negatives / ( n_positives + 1e-12 )
+
+        # broadcast to 3D
+        upweight = F.expand_dims(upweight, axis=1)
+        upweight = F.expand_dims(upweight, axis=2)
+        upweight = F.broadcast_like(upweight, label)
+
+        return upweight
