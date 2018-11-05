@@ -144,7 +144,7 @@ class MelodyDataset(Dataset):
         return self.n_classes
 
     def num_tokens(self):
-        return N_FEATURES_WITH_SILENCE + self.mask_offset
+        return N_FEATURES_WITHOUT_SILENCE + self.mask_offset
 
     def _get_class_arrays(self):
         arrays = [

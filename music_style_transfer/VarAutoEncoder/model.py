@@ -69,7 +69,7 @@ class EncoderDecoder(mx.gluon.HybridBlock):
                                    flatten=False,
                                    in_units=self.config.decoder_config.hidden_dim))
 
-            pass
+
 
     def hybrid_forward(self, F, tokens, articulations, enc_classes, dec_classes, noise):
         # melodies: shape: (batch_size, seq_len, feature_dim)

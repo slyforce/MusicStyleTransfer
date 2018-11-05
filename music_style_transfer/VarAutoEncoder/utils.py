@@ -19,12 +19,12 @@ def create_directory_if_not_present(directory: str):
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-def visualize_melody(melody: Melody):
+def visualize_melody(melody: Melody, offset: int = -1):
     pixels = np.zeros((len(melody), N_FEATURES_WITHOUT_SILENCE))
 
     for i, notes in enumerate(melody):
        for note in notes:
-           pixels[i, note.get_midi_index()] = 1.
+           pixels[i, note.get_midi_index() + offset] = 1.
 
     pixels = np.transpose(pixels, axes=(1, 0))
     mpl.imshow(pixels, cmap='gray')
