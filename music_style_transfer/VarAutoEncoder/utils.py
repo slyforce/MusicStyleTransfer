@@ -9,15 +9,19 @@ import os
 
 from MIDIUtil.Melody import Melody
 
+
 def save_model(model: mx.gluon.HybridBlock, output_path: str):
     model.save_parameters(output_path)
+
 
 def load_model_parameters(model: mx.gluon.HybridBlock, path: str, context: mx.Context):
     model.load_parameters(path, ctx=context)
 
+
 def create_directory_if_not_present(directory: str):
     if not os.path.exists(directory):
         os.makedirs(directory)
+
 
 def visualize_melody(melody: Melody, offset: int = -1):
     pixels = np.zeros((len(melody), N_FEATURES_WITHOUT_SILENCE))

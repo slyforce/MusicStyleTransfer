@@ -42,7 +42,7 @@ class TrainConfig:
                  optimizer: OptimizerConfig,
                  kl_loss: float,
                  label_smoothing: float,
-                 positive_label_upscaling: bool):
+                 negative_label_downscaling: bool):
         self.batch_size = batch_size
         self.sampling_frequency = sampling_frequency
         self.checkpoint_frequency = checkpoint_frequency
@@ -50,7 +50,7 @@ class TrainConfig:
         self.optimizer = optimizer
         self.kl_loss_weight = kl_loss
         self.label_smoothing = label_smoothing
-        self.positive_label_upscaling = positive_label_upscaling
+        self.negative_label_downscaling = negative_label_downscaling
 
 class TrainingState:
     def __init__(self):
@@ -81,12 +81,12 @@ class Trainer:
     def _initialize_losses(self):
         self.token_loss = loss.BinaryCrossEntropy(from_sigmoid=False,
                                                   label_smoothing=self.config.label_smoothing,
-                                                  positive_label_upweighting=self.config.positive_label_upscaling)
+                                                  negative_label_downweighting=self.config.negative_label_downscaling)
         self.token_loss.hybridize()
 
         self.art_loss = loss.BinaryCrossEntropy(from_sigmoid=False,
                                                 label_smoothing=self.config.label_smoothing,
-                                                positive_label_upweighting=self.config.positive_label_upscaling)
+                                                negative_label_downweighting=self.config.negative_label_downscaling)
         self.art_loss.hybridize()
 
         self.kl_loss = loss.VariationalKLLoss()
@@ -113,10 +113,10 @@ class Trainer:
             return ((pred > 0.) == labels).sum(), labels.size
 
         self.tokens_metric_bce = mx.metric.CustomMetric(mean, name='tokens_bce')
-        self.tokens_metric_acc =  mx.metric.CustomMetric(accuracy, name='tokens_acc')
+        self.tokens_metric_acc = mx.metric.CustomMetric(accuracy, name='tokens_acc')
 
         self.arti_metric_bce = mx.metric.CustomMetric(mean, name='arti_bce')
-        self.arti_metric_acc =  mx.metric.CustomMetric(accuracy, name='arti_acc')
+        self.arti_metric_acc = mx.metric.CustomMetric(accuracy, name='arti_acc')
 
         self.kl_metric = mx.metric.CustomMetric(mean, name='kl_loss')
         self.main_metric = mx.metric.CustomMetric(mean, name='total_loss')

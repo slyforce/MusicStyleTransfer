@@ -45,7 +45,7 @@ train_arg.add_argument('--optimizer-params', type=str, default='')
 train_arg.add_argument('--validation-split', type=float, default=0.1)
 train_arg.add_argument('--kl-loss', type=float, default=1.0)
 train_arg.add_argument('--label-smoothing', type=float, default=0.0)
-train_arg.add_argument('--positive-label-upscaling', action='store_true')
+train_arg.add_argument('--negative-label-downscaling', action='store_true')
 
 
 # Misc

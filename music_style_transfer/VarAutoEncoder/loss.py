@@ -12,11 +12,11 @@ class VariationalKLLoss(mx.gluon.loss.Loss):
 
 
 class BinaryCrossEntropy(mx.gluon.loss.Loss):
-    def __init__(self, from_sigmoid=False, label_smoothing=0.0, positive_label_upweighting=True):
+    def __init__(self, from_sigmoid=False, label_smoothing=0.0, negative_label_downweighting=True):
         super().__init__(weight=1.0, batch_axis=0)
         self._from_sigmoid = from_sigmoid
         self.label_smoothing = label_smoothing
-        self.positive_label_upweighting = positive_label_upweighting
+        self.negative_label_downweighting = negative_label_downweighting
 
     def _apply_label_smoothing(self, label):
         # label smoothing with binary labels -> each has a 50% probability
@@ -34,9 +34,9 @@ class BinaryCrossEntropy(mx.gluon.loss.Loss):
         # epsilon normalization term to not take the log of 0
         bce = -1 * (s_label * F.log(1e-12 + pred) + (1-s_label) * F.log(1e-12 + (1. - pred)))
 
-        if self.positive_label_upweighting:
-            # scale up the loss values for positive labels
-            bce = F.where(label == 1.,
+        if self.negative_label_downweighting:
+            # scale down the loss values for negative labels
+            bce = F.where(label == 0.,
                           F.broadcast_mul(self._calculate_batchwise_upweighting(F, label), bce) * bce,
                           bce)
 
@@ -58,11 +58,11 @@ class BinaryCrossEntropy(mx.gluon.loss.Loss):
 
         # calculate the ratio of negative to positive samples
         # it's possible for there to be no positive samples therefore add an epsilon term
-        upweight = n_negatives / ( n_positives + 1e-12 )
+        downweight = n_positives / (n_negatives + 1e-12)
 
         # broadcast to 3D
-        upweight = F.expand_dims(upweight, axis=1)
-        upweight = F.expand_dims(upweight, axis=2)
-        upweight = F.broadcast_like(upweight, label)
+        downweight = F.expand_dims(downweight, axis=1)
+        downweight = F.expand_dims(downweight, axis=2)
+        downweight = F.broadcast_like(downweight, label)
 
-        return upweight
+        return downweight
