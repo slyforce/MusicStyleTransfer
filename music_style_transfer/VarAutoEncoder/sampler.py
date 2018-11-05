@@ -1,5 +1,5 @@
 import mxnet as mx
-from VarAutoEncoder.data import Loader, MelodyDataset
+from VarAutoEncoder.data import Loader, MelodyDataset, Dataset
 from music_style_transfer.MIDIUtil.Melody import Melody
 from music_style_transfer.MIDIUtil.MelodyWriter import MelodyWriter
 from music_style_transfer.MIDIUtil.Note import Note
@@ -33,17 +33,24 @@ def setup():
                    context,
                    args.load_checkpoint)
 
-    sampler = Sampler(m, context)
+    sampler = Sampler(model=m,
+                      context=context,
+                      visualize_samples=args.visualize_samples,
+                      output_path=args.out_samples)
     sampler.sample_from_dataset(dataset, args.out_samples)
+
 
 class Sampler:
     def __init__(self,
-                 model,
-                 context):
+                 model: model.EncoderDecoder,
+                 context: mx.Context,
+                 output_path: str,
+                 visualize_samples: bool = True):
         self.model = model
         self.context = context
-
+        self.visualize_samples = visualize_samples
         self.melody_writer = MelodyWriter()
+        self.output_path = output_path + '/'
 
     def _generate_var_ae_noise(self, batch_size, seq_len, set_to_zero=False):
         shape = (batch_size, seq_len, self.model.config.latent_dimension)
@@ -56,15 +63,20 @@ class Sampler:
                                        ctx=self.context)
 
     def sample_from_dataset(self,
-                            dataset,
-                            output_path):
+                            dataset: Dataset,
+                            output_suffix: str):
         for batch in dataset:
-            self.sample_batch(batch, dataset.num_classes(), output_path)
+            self.sample_batch(batch, dataset.num_classes(), output_suffix)
 
-    def sample_batch(self, batch, num_classes, output_path):
+    def sample_batch(self,
+                     batch: mx.io.DataBatch,
+                     num_classes: int,
+                     output_suffix: str):
         [tokens, articulations, classes] = [x.as_in_context(self.context) for x in batch.data]
         (batch_size, seq_len, _) = tokens.shape
-        self.melody_writer.write_to_file(output_path + '_original.mid',
+
+        print("Writing {}".format(self.output_path + output_suffix + '_original.mid'))
+        self.melody_writer.write_to_file(self.output_path + output_suffix + '_original.mid',
                                          self.construct_melody(tokens[0, :], articulations[0, :]))
         for c in range(0, num_classes):
             tokens_out, articulations_out, _, _ = self.model(tokens,
@@ -73,7 +85,8 @@ class Sampler:
                                                              mx.nd.ones_like(classes) * c,
                                                              self._generate_var_ae_noise(batch_size, seq_len, True))
 
-            self.melody_writer.write_to_file(output_path + '_{}.mid'.format(c),
+            print("Writing {}".format(self.output_path + output_suffix + '_{}.mid'.format(c)))
+            self.melody_writer.write_to_file(self.output_path + output_suffix + '_{}.mid'.format(c),
                                              self.construct_melody(tokens_out[0, :], articulations_out[0, :]))
 
     def construct_melody(self, tokens, articulations):
@@ -90,7 +103,9 @@ class Sampler:
 
             melody.notes.append(notes)
 
-        utils.visualize_melody(melody)
+        if self.visualize_samples:
+            utils.visualize_melody(melody)
+
         return melody
 
 if __name__ == '__main__':

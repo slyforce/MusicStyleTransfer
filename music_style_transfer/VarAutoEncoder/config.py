@@ -58,6 +58,8 @@ misc_arg.add_argument('--out-samples', type=str, default=None)
 misc_arg.add_argument('--model-output', type=str, default='models')
 misc_arg.add_argument('--gpu', action='store_true')
 misc_arg.add_argument('--toy', action='store_true')
+misc_arg.add_argument('--visualize-samples', action='store_true')
+
 
 def get_config():
     config, unparsed = parser.parse_known_args()

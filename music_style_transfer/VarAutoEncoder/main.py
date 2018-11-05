@@ -4,6 +4,7 @@ from music_style_transfer.VarAutoEncoder import model
 from music_style_transfer.VarAutoEncoder import trainer
 from .config import get_config
 from .utils import create_directory_if_not_present
+from .sampler import Sampler
 
 
 def create_toy_model_config(data):
@@ -31,7 +32,7 @@ def create_toy_train_config():
                                  optimizer=trainer.OptimizerConfig(
                                      learning_rate=1e-4,
                                      optimizer='adam',
-                                     optimizer_params = 'clip_gradient:1.0',
+                                     optimizer_params='clip_gradient:1.0',
                                  ),
                                  label_smoothing=0.0,
                                  positive_label_upscaling=True)
@@ -76,13 +77,13 @@ def main_toy():
 
     t = trainer.Trainer(config=create_toy_train_config(),
                         context=mx.cpu(),
-                        model=m)
+                        model=m,
+                        sampler=None)
 
     t.fit(dataset=dataset,
           validation_dataset=dataset,
           model_folder='/tmp/out',
-          epochs=20000,
-          samples_output_path='/tmp/out')
+          epochs=20000)
 
 def main():
     args = get_config()
@@ -103,17 +104,21 @@ def main():
     config = create_model_config(args, train_dataset)
     config.save(args.model_output + '/config')
 
+    context = mx.gpu() if args.gpu else mx.cpu()
     m = model.EncoderDecoder(config=config)
-
+    sampler = Sampler(model=m,
+                      context=context,
+                      visualize_samples=args.visualize_samples,
+                      output_path=args.out_samples)
     t = trainer.Trainer(config=create_train_config(args),
-                        context=mx.gpu() if args.gpu else mx.cpu(),
-                        model=m)
+                        context=context,
+                        model=m,
+                        sampler=sampler)
 
     t.fit(dataset=train_dataset,
           validation_dataset=valid_dataset,
           model_folder=args.model_output,
-          epochs=args.epochs,
-          samples_output_path=args.out_samples)
+          epochs=args.epochs)
 
     print("Training finished.")
 

@@ -64,11 +64,12 @@ class Trainer:
     def __init__(self,
                  config: TrainConfig,
                  context: mx.Context,
-                 model: model.EncoderDecoder):
+                 model: model.EncoderDecoder,
+                 sampler: sampler.Sampler):
         self.config = config
         self.context = context
         self.model = model
-        self.sampler = sampler.Sampler(model=self.model, context=self.context)
+        self.sampler = sampler
 
         self._initialize_model()
         self._initialize_optimizers()
@@ -128,8 +129,7 @@ class Trainer:
             dataset: data.Dataset,
             validation_dataset: data.Dataset,
             model_folder: str,
-            epochs: int,
-            samples_output_path: str = None):
+            epochs: int):
 
         start_time = time()
         self.train_state = TrainingState()
@@ -143,9 +143,8 @@ class Trainer:
                 if self.train_state.n_batches % 50 == 0:
                     self._periodic_log(epoch, start_time)
 
-                if samples_output_path is not None and self.config.sampling_frequency > 0 and self.train_state.n_batches % self.config.sampling_frequency == 0:
-                    print("Generating samples with prefix {}".format(samples_output_path + '/iter-{}'.format(self.train_state.n_batches)))
-                    self.sampler.sample_batch(batch, dataset.num_classes(), samples_output_path + '/iter-{}'.format(self.train_state.n_batches))
+                if self.sampler is not None and self.config.sampling_frequency > 0 and self.train_state.n_batches % self.config.sampling_frequency == 0:
+                    self.sampler.sample_batch(batch, dataset.num_classes(), 'iter-{}'.format(self.train_state.n_batches))
 
                 if self.train_state.n_batches % self.config.checkpoint_frequency == 0:
                     self._checkpoint(model_folder, validation_dataset)
@@ -153,8 +152,6 @@ class Trainer:
                     if self.train_state.num_checkpoints_not_improved == self.config.num_checkpoints_not_improved:
                         print("Maximum checkpoints not improved reached. Stopping training.")
                         return
-
-                    print("Checkpoint [{}]  {}\n".format(self.train_state.n_checkpoints, self._metric_to_string_output(self.train_state.n_batches)))
 
     def _step(self, batch):
         [tokens, articulations, classes] = [x.as_in_context(self.context) for x in batch.data]
@@ -243,6 +240,9 @@ class Trainer:
                 self.config.num_checkpoints_not_improved))
             print("Best loss thus far: {}".format(self.train_state.best_resconstruction_loss))
 
+        print("Checkpoint [{}]  {}\n".format(self.train_state.n_checkpoints,
+                                             self._metric_to_string_output(self.train_state.n_batches)))
+
     def _metric_to_string_output(self, n_batches):
         out = ''
         for metric in self.metrics:
@@ -259,7 +259,6 @@ class Trainer:
                                                                     self.train_state.n_batches,
                                                                     self.train_state.n_batches / (time() - start_time),
                                                                     self._metric_to_string_output(self.train_state.n_batches)))
-
         self._log_gradients()
 
 
