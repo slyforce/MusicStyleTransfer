@@ -7,6 +7,7 @@ from . import config
 from . import model
 from . import utils
 
+import os
 
 def load_model(model_folder: str,
                context: mx.Context,
@@ -33,11 +34,13 @@ def setup():
                    context,
                    args.load_checkpoint)
 
+    utils.create_directory_if_not_present(args.out_samples)
+
     sampler = Sampler(model=m,
                       context=context,
                       visualize_samples=args.visualize_samples,
                       output_path=args.out_samples)
-    sampler.sample_from_dataset(dataset, args.out_samples)
+    sampler.sample_from_dataset(dataset, '')
 
 
 class Sampler:
@@ -50,7 +53,7 @@ class Sampler:
         self.context = context
         self.visualize_samples = visualize_samples
         self.melody_writer = MelodyWriter()
-        self.output_path = output_path + '/'
+        self.output_path = output_path
 
     def _generate_var_ae_noise(self, batch_size, seq_len, set_to_zero=False):
         shape = (batch_size, seq_len, self.model.config.latent_dimension)
@@ -65,8 +68,8 @@ class Sampler:
     def sample_from_dataset(self,
                             dataset: Dataset,
                             output_suffix: str):
-        for batch in dataset:
-            self.sample_batch(batch, dataset.num_classes(), output_suffix)
+        for i, batch in enumerate(dataset):
+            self.sample_batch(batch, dataset.num_classes(), output_suffix + "melody_id{}_class".format(i))
 
     def sample_batch(self,
                      batch: mx.io.DataBatch,
@@ -75,8 +78,9 @@ class Sampler:
         [tokens, articulations, classes] = [x.as_in_context(self.context) for x in batch.data]
         (batch_size, seq_len, _) = tokens.shape
 
-        print("Writing {}".format(self.output_path + output_suffix + '_original.mid'))
-        self.melody_writer.write_to_file(self.output_path + output_suffix + '_original.mid',
+        print("Writing {}".format(os.path.join(self.output_path, '{}_original.mid'.format(output_suffix))))
+
+        self.melody_writer.write_to_file(os.path.join(self.output_path, '{}_original.mid'.format(output_suffix)),
                                          self.construct_melody(tokens[0, :], articulations[0, :]))
         for c in range(0, num_classes):
             tokens_out, articulations_out, _, _ = self.model(tokens,
@@ -85,8 +89,8 @@ class Sampler:
                                                              mx.nd.ones_like(classes) * c,
                                                              self._generate_var_ae_noise(batch_size, seq_len, True))
 
-            print("Writing {}".format(self.output_path + output_suffix + '_{}.mid'.format(c)))
-            self.melody_writer.write_to_file(self.output_path + output_suffix + '_{}.mid'.format(c),
+            print("Writing {}".format(os.path.join(self.output_path, '{}_{}.mid'.format(output_suffix, c))))
+            self.melody_writer.write_to_file(os.path.join(self.output_path, '{}_{}.mid'.format(output_suffix, c)),
                                              self.construct_melody(tokens_out[0, :], articulations_out[0, :]))
 
     def construct_melody(self, tokens, articulations):
