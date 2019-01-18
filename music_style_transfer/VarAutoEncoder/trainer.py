@@ -112,8 +112,15 @@ class Trainer:
         def accuracy(labels, pred):
             return ((pred > 0.) == labels).sum(), labels.size
 
+        def accuracy_on_nonzero(labels, pred):
+            nonzero_labels = np.where(labels != 0.,
+                                      np.ones_like(labels),
+                                      np.zeros_like(labels))
+
+            return (((pred > 0.) == labels) * nonzero_labels).sum(), nonzero_labels.sum()
+
         self.tokens_metric_bce = mx.metric.CustomMetric(mean, name='tokens_bce')
-        self.tokens_metric_acc = mx.metric.CustomMetric(accuracy, name='tokens_acc')
+        self.tokens_metric_acc = mx.metric.CustomMetric(accuracy_on_nonzero, name='tokens_acc')
 
         self.arti_metric_bce = mx.metric.CustomMetric(mean, name='arti_bce')
         self.arti_metric_acc = mx.metric.CustomMetric(accuracy, name='arti_acc')
