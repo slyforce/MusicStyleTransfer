@@ -35,6 +35,9 @@ data_arg.add_argument('--batch-size', type=int, default=1)
 data_arg.add_argument('--max-seq-len', type=int, default=64)
 data_arg.add_argument('--slices-per-quarter-note', type=float, default=64)
 data_arg.add_argument('--data', type=str, default='data')
+data_arg.add_argument('--minimum-pattern-length', type=int, default=16)
+data_arg.add_argument('--pattern-identifier', type=str, choices=['recurring', ''], default='')
+
 
 # Training / test parameters
 train_arg = add_argument_group('Training')

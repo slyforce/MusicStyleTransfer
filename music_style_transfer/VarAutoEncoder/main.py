@@ -5,6 +5,7 @@ from music_style_transfer.VarAutoEncoder import trainer
 from .config import get_config
 from .utils import create_directory_if_not_present
 from .sampler import Sampler
+from music_style_transfer.MIDIUtil.PatternIdentifier import get_pattern_identifier
 
 
 def create_toy_model_config(data):
@@ -94,7 +95,10 @@ def main():
 
     loader = Loader(path=args.data,
                     max_sequence_length=args.max_seq_len,
-                    slices_per_quarter_note=args.slices_per_quarter_note)
+                    slices_per_quarter_note=args.slices_per_quarter_note,
+                    pattern_identifer=get_pattern_identifier(args.pattern_identifier,
+                                                             args.minimum_pattern_length,
+                                                             args.max_seq_len))
 
     train_dataset, valid_dataset = load_dataset(loader.melodies, args.validation_split, args.batch_size)
 

@@ -1,4 +1,5 @@
 from music_style_transfer.MIDIUtil.defaults import *
+from music_style_transfer.MIDIUtil.Note import Note
 
 
 class Melody:
@@ -20,6 +21,14 @@ class Melody:
 
     def __getitem__(self, key):
         return self.notes[key]
+
+    def copy_metainformation(self):
+        melody = Melody(key=self.key,
+                        bpm=self.bpm,
+                        resolution=self.resolution,
+                        slices_per_quarter=self.slices_per_quarter,
+                        description=self.description)
+        return melody
 
     def split_based_on_sequence_length(self, max_length):
         result = []
@@ -58,3 +67,10 @@ class Melody:
                 cur_note.articulated = True
             else:
                 cur_note.articulated = False
+
+
+def melody_from_sequence_of_pitches(pitches):
+    melody = Melody()
+    for pitch in pitches:
+        melody.notes.append(set([Note(pitch)]))
+    return melody

@@ -17,12 +17,14 @@ class Loader:
                  path: str,
                  max_sequence_length: int,
                  slices_per_quarter_note: int,
-                 range_type: str = ''):
+                 range_type: str = '',
+                 pattern_identifer = None):
         self.path = path
         self.max_sequence_length = max_sequence_length
         self.slices_per_quarter_note = slices_per_quarter_note
         self.range_type = range_type
         assert range_type == '', "No support for restricted ranges yet"
+        self.pattern_identifier = pattern_identifer
 
         self._initialize_restrictor()
         self.midi_reader = MIDIReader(self.slices_per_quarter_note)
@@ -36,8 +38,11 @@ class Loader:
             melodies[directory] = []
             for n_files, fname in enumerate(glob.glob(self.path + '/' + directory + "/*.mid")):
                 melody = self.midi_reader.read_file(fname)[0]
-                melodies[directory] += melody.split_based_on_sequence_length(
-                    self.max_sequence_length)
+
+                if self.pattern_identifier is not None:
+                    melodies[directory] += self.pattern_identifier.parse(melody)
+                else:
+                    melodies[directory] += melody.split_based_on_sequence_length(self.max_sequence_length)
 
             print("Read {} files from {}".format(n_files + 1, directory))
         return melodies
