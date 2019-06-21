@@ -3,3 +3,7 @@ venv/
 *.pyc
 *.history*
 *log
+
+*model/*
+samples_output/*
+work/*

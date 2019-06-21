@@ -5,22 +5,28 @@ from music_style_transfer.VarAutoEncoder import trainer
 from .config import get_config
 from .utils import create_directory_if_not_present
 from .sampler import Sampler
-from music_style_transfer.MIDIUtil.PatternIdentifier import get_pattern_identifier
 
 
 def create_toy_model_config(data):
     return model.EncoderDecoderConfig(
-        latent_dimension=16,
-        encoder_config=model.LSTMConfig(
-            n_layers=1,
-            hidden_dim=32,
-            dropout=0.0),
-        decoder_config=model.LSTMConfig(
-            n_layers=1,
-            hidden_dim=32,
-            dropout=0.0),
-        feature_dimension=data.num_tokens(),
-        input_classes=data.num_classes()
+        encoder_config=model.EncoderConfig(
+            lstm_config=model.LSTMConfig(
+                n_layers=1,
+                hidden_dim=32,
+                dropout=0.0),
+            latent_dim=16,
+            num_classes=data.num_classes(),
+            input_dim=data.num_tokens(),
+        ),
+        decoder_config=model.DecoderConfig(
+            lstm_config=model.LSTMConfig(
+                n_layers=1,
+                hidden_dim=32,
+                dropout=0.0),
+            latent_dim=16,
+            num_classes=data.num_classes(),
+            output_dim=data.num_tokens()
+        )
     )
 
 
@@ -29,15 +35,32 @@ def create_toy_train_config():
                                  sampling_frequency=500,
                                  checkpoint_frequency=1000,
                                  num_checkpoints_not_improved=-1,
-                                 kl_loss=0.0,
+                                 kl_loss=1.0,
                                  optimizer=trainer.OptimizerConfig(
-                                     learning_rate=1e-4,
+                                     learning_rate=1e-3,
                                      optimizer='adam',
                                      optimizer_params='clip_gradient:1.0',
                                  ),
                                  label_smoothing=0.0,
                                  negative_label_downscaling=True)
     return config
+
+
+def main_toy():
+    dataset = ToyData()
+
+    m = model.TrainingModel(decoder_config=create_toy_model_config(dataset).decoder_config,
+                            encoder_config=create_toy_model_config(dataset).encoder_config)
+
+    t = trainer.Trainer(config=create_toy_train_config(),
+                        context=mx.cpu(),
+                        model=m,
+                        sampler=None)
+
+    t.fit(dataset=dataset,
+          validation_dataset=dataset,
+          model_folder='/tmp/out',
+          epochs=20000)
 
 
 def create_train_config(args):
@@ -58,33 +81,27 @@ def create_train_config(args):
 
 def create_model_config(args, dataset: Dataset):
     return model.EncoderDecoderConfig(
-        latent_dimension=args.latent_dim,
-        encoder_config=model.LSTMConfig(
-            n_layers=args.e_n_layers,
-            hidden_dim=args.e_rnn_hidden_dim,
-            dropout=args.e_dropout),
-        decoder_config=model.LSTMConfig(
-            n_layers=args.d_n_layers,
-            hidden_dim=args.d_rnn_hidden_dim,
-            dropout=args.d_dropout),
-        feature_dimension=dataset.num_tokens(),
-        input_classes=dataset.num_classes()
+        encoder_config=model.EncoderConfig(
+            lstm_config=model.LSTMConfig(
+                n_layers=args.e_n_layers,
+                hidden_dim=args.e_rnn_hidden_dim,
+                dropout=args.e_dropout),
+            latent_dim=args.latent_dim,
+            num_classes=dataset.num_classes(),
+            input_dim=dataset.num_tokens(),
+        ),
+        decoder_config=model.DecoderConfig(
+            lstm_config=model.LSTMConfig(
+                n_layers=args.d_n_layers,
+                hidden_dim=args.d_rnn_hidden_dim,
+                dropout=args.d_dropout),
+            latent_dim=args.latent_dim,
+            num_classes=dataset.num_classes(),
+            output_dim=dataset.num_tokens()
+        )
     )
 
-def main_toy():
-    dataset = ToyData()
 
-    m = model.EncoderDecoder(config=create_toy_model_config(dataset))
-
-    t = trainer.Trainer(config=create_toy_train_config(),
-                        context=mx.cpu(),
-                        model=m,
-                        sampler=None)
-
-    t.fit(dataset=dataset,
-          validation_dataset=dataset,
-          model_folder='/tmp/out',
-          epochs=20000)
 
 def main():
     args = get_config()
@@ -95,12 +112,19 @@ def main():
 
     loader = Loader(path=args.data,
                     max_sequence_length=args.max_seq_len,
-                    slices_per_quarter_note=args.slices_per_quarter_note,
-                    pattern_identifer=get_pattern_identifier(args.pattern_identifier,
-                                                             args.minimum_pattern_length,
-                                                             args.max_seq_len))
+                    slices_per_quarter_note=args.slices_per_quarter_note)
 
-    train_dataset, valid_dataset = load_dataset(loader.melodies, args.validation_split, args.batch_size)
+    if args.validation_data is not None:
+        val_loader = Loader(path=args.validation_data,
+                            max_sequence_length=args.max_seq_len,
+                            slices_per_quarter_note=args.slices_per_quarter_note)
+    else:
+        val_loader = None
+
+    train_dataset, valid_dataset = load_dataset(loader,
+                                                args.batch_size,
+                                                args.validation_split,
+                                                val_loader)
 
     create_directory_if_not_present(args.model_output)
     create_directory_if_not_present(args.out_samples)
@@ -109,15 +133,18 @@ def main():
     config.save(args.model_output + '/config')
 
     context = mx.gpu() if args.gpu else mx.cpu()
-    m = model.EncoderDecoder(config=config)
+    m = model.TrainingModel(encoder_config=config.encoder_config,
+                            decoder_config=config.decoder_config)
+
     sampler = Sampler(model=m,
                       context=context,
                       visualize_samples=args.visualize_samples,
                       output_path=args.out_samples)
+
     t = trainer.Trainer(config=create_train_config(args),
                         context=context,
                         model=m,
-                        sampler=sampler)
+                        sampler=None)
 
     t.fit(dataset=train_dataset,
           validation_dataset=valid_dataset,

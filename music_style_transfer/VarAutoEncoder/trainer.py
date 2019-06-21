@@ -52,6 +52,7 @@ class TrainConfig:
         self.label_smoothing = label_smoothing
         self.negative_label_downscaling = negative_label_downscaling
 
+
 class TrainingState:
     def __init__(self):
         self.n_checkpoints = 0
@@ -64,7 +65,7 @@ class Trainer:
     def __init__(self,
                  config: TrainConfig,
                  context: mx.Context,
-                 model: model.EncoderDecoder,
+                 model: model.TrainingModel,
                  sampler: sampler.Sampler):
         self.config = config
         self.context = context
@@ -79,15 +80,9 @@ class Trainer:
         self.summary_writer = SummaryWriter(logdir='/tmp/out', flush_secs=5)
 
     def _initialize_losses(self):
-        self.token_loss = loss.BinaryCrossEntropy(from_sigmoid=False,
-                                                  label_smoothing=self.config.label_smoothing,
-                                                  negative_label_downweighting=self.config.negative_label_downscaling)
+        self.token_loss = loss.SoftmaxCrossEntropy(axis=-1,
+                                                   batch_axis=0)
         self.token_loss.hybridize()
-
-        self.art_loss = loss.BinaryCrossEntropy(from_sigmoid=False,
-                                                label_smoothing=self.config.label_smoothing,
-                                                negative_label_downweighting=self.config.negative_label_downscaling)
-        self.art_loss.hybridize()
 
         self.kl_loss = loss.VariationalKLLoss()
         self.kl_loss.hybridize()
@@ -103,40 +98,27 @@ class Trainer:
 
     def _initialize_model(self):
         self.model.initialize(mx.init.Xavier(), ctx=self.context)
-        self.model.hybridize()
+        #self.model.hybridize()
 
     def _initialize_metrics(self):
         def mean(_, pred):
             return pred.sum(), pred.size
 
-        def accuracy(labels, pred):
-            return ((pred > 0.) == labels).sum(), labels.size
-
-        def accuracy_on_nonzero(labels, pred):
-            nonzero_labels = np.where(labels != 0.,
-                                      np.ones_like(labels),
-                                      np.zeros_like(labels))
-
-            return (((pred > 0.) == labels) * nonzero_labels).sum(), nonzero_labels.sum()
-
-        self.tokens_metric_bce = mx.metric.CustomMetric(mean, name='tokens_bce')
-        self.tokens_metric_acc = mx.metric.CustomMetric(accuracy_on_nonzero, name='tokens_acc')
-
-        self.arti_metric_bce = mx.metric.CustomMetric(mean, name='arti_bce')
-        self.arti_metric_acc = mx.metric.CustomMetric(accuracy, name='arti_acc')
+        self.tokens_metric_ppl = mx.metric.Perplexity(name='ppl', ignore_label=0)
+        self.tokens_metric_acc = mx.metric.Accuracy(name='acc', axis=2)
 
         self.kl_metric = mx.metric.CustomMetric(mean, name='kl_loss')
         self.main_metric = mx.metric.CustomMetric(mean, name='total_loss')
 
-        self.metrics = [self.tokens_metric_bce, self.tokens_metric_acc,
-                        self.arti_metric_bce, self.arti_metric_acc,
+        self.metrics = [self.tokens_metric_ppl, self.tokens_metric_acc,
                         self.kl_metric, self.main_metric]
+        self._reset_metrics()
 
     def fit(self,
             dataset: data.Dataset,
-            validation_dataset: data.Dataset,
             model_folder: str,
-            epochs: int):
+            epochs: int,
+            validation_dataset: data.Dataset = None):
 
         start_time = time()
         self.train_state = TrainingState()
@@ -160,95 +142,66 @@ class Trainer:
                         print("Maximum checkpoints not improved reached. Stopping training.")
                         return
 
-    def _step(self, batch):
-        [tokens, articulations, classes] = [x.as_in_context(self.context) for x in batch.data]
-        (batch_size, seq_len, _) = tokens.shape
+    def _step(self, batch, is_train=True):
+        [tokens, seq_lens, classes] = [x.as_in_context(self.context) for x in batch.data]
+        [labels] = [x.as_in_context(self.context) for x in batch.label]
+        batch_size, seq_len = tokens.shape
 
-        noise = self._generate_var_ae_noise(batch_size, seq_len)
-
+        # forward, todo: remove autograd in inference mode
         with autograd.record():
-            loss, sep_losses, outputs = self._forward_pass_with_loss_computation(articulations, classes, noise, tokens)
+            probs, z_means, z_vars = self.model(tokens, seq_lens, classes)
 
-        # backprop step
-        loss.backward()
+            ce_loss = self.token_loss(probs, labels)
+            kl_loss = self.kl_loss(z_means, z_vars)
+            loss = ce_loss + self.config.kl_loss_weight * kl_loss
+            #print(ce_loss, kl_loss, loss)
 
-        # update step with metric logging
-        self.optimizer.step(batch_size)
-        self._update_metrics(loss, *sep_losses,
-                             tokens, articulations,
-                             *outputs)
+        # backward + update
+        if is_train:
+            loss.backward()
+            self.optimizer.step(batch_size)
 
-    def _forward_pass_with_loss_computation(self, articulations, classes, noise, tokens):
-        # forward pass through the network
-        tokens_out, articulations_out, z_means, z_stddev = self.model(tokens,
-                                                                      articulations,
-                                                                      classes,
-                                                                      classes,
-                                                                      noise)
-        # compute loss of
-        # (1) tokens
-        # (2) articulations
-        # (3) KL-divergence to unit gaussian
-        tk_loss = self.token_loss(tokens_out, tokens)
-        art_loss = self.art_loss(articulations_out, articulations)
-        kl_loss = self.config.kl_loss_weight * self.kl_loss(z_means, z_stddev)
-        loss = kl_loss + art_loss + tk_loss
-        return loss, (tk_loss, art_loss, kl_loss), (tokens_out, articulations_out)
+        self._update_metrics(kl_loss, labels, loss, probs)
 
-    def _update_metrics(self, loss, tk_loss, art_loss, kl_loss,
-                        tokens, articulations,
-                        tokens_out, articulations_out):
-        self.tokens_metric_bce.update(mx.nd.ones_like(tk_loss), tk_loss)
-        self.tokens_metric_acc.update(tokens, tokens_out)
-
-        self.arti_metric_bce.update(mx.nd.ones_like(art_loss), art_loss)
-        self.arti_metric_acc.update(articulations, articulations_out)
-
+    def _update_metrics(self, kl_loss, labels, loss, probs):
+        self.tokens_metric_ppl.update(labels, probs)
+        self.tokens_metric_acc.update(labels, probs)
         self.kl_metric.update(mx.nd.ones_like(kl_loss), kl_loss)
         self.main_metric.update(mx.nd.ones_like(loss), loss)
-
-    def _generate_var_ae_noise(self, batch_size, seq_len):
-        return mx.nd.random_normal(loc=0.,
-                                   scale=1.,
-                                   shape=(batch_size, seq_len, self.model.config.latent_dimension),
-                                   ctx=self.context)
 
     def _checkpoint(self, model_folder, validation_dataset):
         self.train_state.n_checkpoints += 1
         print("\nCheckpoint {} reached.".format(self.train_state.n_checkpoints))
 
+        # save model parameters
         utils.save_model(self.model, model_folder + '/params.{}'.format(self.train_state.n_checkpoints))
+        self._reset_metrics()
 
-        for m in self.metrics:
-            m.reset()
+        # return early if no validation is required
+        if validation_dataset is None:
+            return
 
         for batch in validation_dataset:
-            [tokens, articulations, classes] = [x.as_in_context(self.context) for x in batch.data]
-            (batch_size, seq_len, _) = tokens.shape
+            self._step(batch, is_train=False)
 
-            loss, sep_losses, outputs = self._forward_pass_with_loss_computation(articulations,
-                                                                                 classes,
-                                                                                 self._generate_var_ae_noise(batch_size, seq_len),
-                                                                                 tokens)
-
-            self._update_metrics(loss, *sep_losses,
-                                 tokens, articulations,
-                                 *outputs)
-
-        r_loss = self.main_metric.get()[1]
-        if r_loss < self.train_state.best_resconstruction_loss:
+        reconstruction_loss = self.main_metric.get()[1]
+        if reconstruction_loss < self.train_state.best_resconstruction_loss:
             print("Loss improved from {} to {}.".format(self.train_state.best_resconstruction_loss,
-                                                        r_loss))
-            self.train_state.best_resconstruction_loss = r_loss
+                                                        reconstruction_loss))
+            self.train_state.best_resconstruction_loss = reconstruction_loss
         else:
             self.train_state.num_checkpoints_not_improved += 1
             print("Loss did not improve. {} out {} unsucessful checkpoints".format(
                 self.train_state.num_checkpoints_not_improved,
                 self.config.num_checkpoints_not_improved))
             print("Best loss thus far: {}".format(self.train_state.best_resconstruction_loss))
-
         print("Checkpoint [{}]  {}\n".format(self.train_state.n_checkpoints,
                                              self._metric_to_string_output(self.train_state.n_batches)))
+        self._reset_metrics()
+
+    def _reset_metrics(self):
+        for m in self.metrics:
+            m.reset()
 
     def _metric_to_string_output(self, n_batches):
         out = ''
@@ -267,7 +220,6 @@ class Trainer:
                                                                     self.train_state.n_batches / (time() - start_time),
                                                                     self._metric_to_string_output(self.train_state.n_batches)))
         self._log_gradients()
-
 
     def _log_gradients(self):
         # logging the gradients of parameters for checking convergence

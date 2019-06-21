@@ -2,8 +2,7 @@ import numpy as np
 import mxnet as mx
 
 from MIDIUtil.defaults import *
-from MIDIUtil.MIDIReader import MIDIReader
-from MIDIUtil.RangeRestrictor import GuitarRangeRestrictor, BassRangeRestrictor, RangeRestrictor
+from MIDIUtil.midi_io import EventBasedMIDIReader
 from MIDIUtil.Melody import Melody
 
 from typing import Dict, List
@@ -16,18 +15,12 @@ class Loader:
     def __init__(self,
                  path: str,
                  max_sequence_length: int,
-                 slices_per_quarter_note: int,
-                 range_type: str = '',
-                 pattern_identifer = None):
+                 slices_per_quarter_note: int):
         self.path = path
         self.max_sequence_length = max_sequence_length
         self.slices_per_quarter_note = slices_per_quarter_note
-        self.range_type = range_type
-        assert range_type == '', "No support for restricted ranges yet"
-        self.pattern_identifier = pattern_identifer
 
-        self._initialize_restrictor()
-        self.midi_reader = MIDIReader(self.slices_per_quarter_note)
+        self.midi_reader = EventBasedMIDIReader()
         self.melodies = self.read_melodies()
 
     def read_melodies(self):
@@ -35,37 +28,15 @@ class Loader:
         melodies = {}
         directories = next(os.walk(self.path))[1]
         for directory in sorted(directories):
+
             melodies[directory] = []
+            n_files = 0
             for n_files, fname in enumerate(glob.glob(self.path + '/' + directory + "/*.mid")):
                 melody = self.midi_reader.read_file(fname)[0]
-
-                if self.pattern_identifier is not None:
-                    melodies[directory] += self.pattern_identifier.parse(melody)
-                else:
-                    melodies[directory] += melody.split_based_on_sequence_length(self.max_sequence_length)
+                melodies[directory].append(melody)
 
             print("Read {} files from {}".format(n_files + 1, directory))
         return melodies
-
-    def _initialize_restrictor(self):
-        if self.range_type == 'guitar':
-            self.restrictor = GuitarRangeRestrictor()
-        elif self.range_type == 'bass':
-            self.restrictor = BassRangeRestrictor()
-        else:
-            self.restrictor = RangeRestrictor()
-
-    def _restrict_melodies(self):
-        raise NotImplementedError
-
-        modified_melodies = []
-        for melody in self.melodies:
-            modified_melodies.append(self.restrictor.restrict(melody))
-
-        self.melodies = modified_melodies
-
-    def get_feature_length(self):
-        return self.restrictor.get_range_length() + 1  # +1 to include silence
 
 
 class Dataset:
@@ -88,14 +59,16 @@ class ToyData(Dataset):
                  batch_size: int = 3):
         super(ToyData, self).__init__(batch_size)
         self.batch_size = batch_size
-        self.iter = mx.io.NDArrayIter({'data0': mx.nd.array([[1, 2, 3, 0],
-                                                             [2, 3, 4, 0],
-                                                             [3, 4, 5, 0]]).one_hot(depth=self.num_tokens()),
-                                       'data1': mx.nd.array([[1, 1, 1, 0],
-                                                             [0, 1, 0, 0],
-                                                             [1, 1, 0, 0]]).one_hot(depth=self.num_tokens()),
+        self.iter = mx.io.NDArrayIter({'data0': mx.nd.array([[1, 1, 2, 3, 0],
+                                                             [1, 2, 3, 4, 0],
+                                                             [1, 3, 4, 5, 0]]),
+                                       'data1': mx.nd.array([4,4,4]),
                                        'data2': mx.nd.array([0,1,2])},
-                                        batch_size=self.batch_size, shuffle=False)
+                                      label={'labels': mx.nd.array([[1, 2, 3, 0, 0],
+                                                                    [2, 3, 4, 0, 0],
+                                                                    [3, 4, 5, 0, 0]])},
+                                      batch_size=self.batch_size, shuffle=False)
+
     def num_classes(self):
         return 3
 
@@ -111,8 +84,10 @@ class ToyData(Dataset):
 class MelodyDataset(Dataset):
     def __init__(self,
                  batch_size: int,
+                 maximum_sequence_length: int,
                  melodies: Dict[str, List[Melody]]):
         super().__init__(batch_size)
+        self.max_seq_len = maximum_sequence_length + 1 # to accomodate eos and sos symbols
         self.mask_offset = 1
         self._initialize(melodies)
         self._log_dataset()
@@ -128,22 +103,21 @@ class MelodyDataset(Dataset):
         max_seq_lens = []
         for melodies in self.melodies.values():
             max_seq_lens += [max([len(x.notes) for x in melodies])]
-        self.max_sequence_length = max(max_seq_lens)
+        self.seen_max_sequence_length = max(max_seq_lens)
 
         self._get_token_arrays()
-        self._get_articulation_arrays()
-        self._get_class_arrays()
 
-        self.iter = mx.io.NDArrayIter({'data0': self.tokens,
-                                       'data1': self.articulations,
-                                       'data2': self.classes},
+        # prefix with numerals to ensure an ordering
+        self.iter = mx.io.NDArrayIter({'0_tokens': self.tokens,
+                                       '1_classes': self.classes},
+                                      {'labels': self.labels},
                                       batch_size=self.batch_size, shuffle=True)
 
     def _log_dataset(self):
         print("Tokens dataset shape {}".format(self.tokens.shape))
         print("Classes dataset shape {}".format(self.classes.shape))
         for c, m in self.melodies.items():
-            print("Class {} has {} melodies of maximum length {}".format(c, len(m), max([len(x.notes) for x in m])))
+            print("Class {} has {} melodies of maximum length {}".format(c, len(m), self.seen_max_sequence_length ))
 
     def num_classes(self):
         return self.n_classes
@@ -151,74 +125,92 @@ class MelodyDataset(Dataset):
     def num_tokens(self):
         return N_FEATURES_WITHOUT_SILENCE + self.mask_offset
 
-    def _get_class_arrays(self):
-        arrays = [
-            np.full(
-                shape=(
-                    len(melodies),
-                ),
-                fill_value=i) for i,
-            melodies in enumerate(
-                self.melodies.values())]
-        arrays_concat = np.concatenate(arrays, axis=0)
-        self.classes = mx.nd.array(arrays_concat)
-
-    def _get_articulation_arrays(self):
-        articulation_arrays = []
-        for melodies in self.melodies.values():
-            articulations = np.zeros((len(melodies), self.max_sequence_length, self.num_tokens()))
-            for i, melody in enumerate(melodies):
-                for j, notes in enumerate(melody):
-                    for note in notes:
-                        articulations[i, j, note.get_midi_index() + self.mask_offset] = 1 if note.articulated else 0
-
-            articulation_arrays.append(articulations)
-
-        articulation_arrays_concat = np.concatenate(articulation_arrays, axis=0)
-
-        self.articulations = mx.nd.array(articulation_arrays_concat)
-
     def _get_token_arrays(self):
-        token_arrays = []
-        for melodies in self.melodies.values():
-            tokens = np.zeros((len(melodies), self.max_sequence_length, self.num_tokens()))
+        all_tokens, all_labels, all_classes = [], [], []
+        tokens, labels = None, None
 
-            # TODO: somehow optimize
-            # this looks horribly inefficient...
-            for i, melody in enumerate(melodies):
-                for j, notes in enumerate(melody):
-                    for note in notes:
-                        tokens[i, j, note.get_midi_index() + self.mask_offset] = 1.
+        print(self.max_seq_len)
+        for class_idx, melodies_for_class in enumerate(self.melodies.values()):
 
-            token_arrays.append(tokens)
+            for i, melody in enumerate(melodies_for_class):
 
-        token_arrays_concat = np.concatenate(token_arrays, axis=0)
+                tokens = np.full((self.max_seq_len,), fill_value=PAD_ID)
+                labels = np.zeros_like(tokens)
+                tokens[0] = SOS_ID
 
-        self.tokens = mx.nd.array(token_arrays_concat)
+                for j, event in enumerate(melody):
+                    rel_index = j % (self.max_seq_len-1)
+                    labels[rel_index] = tokens[rel_index+1] = FEATURE_OFFSET + event.id
+
+                    if j % (self.max_seq_len - 1) == 0:
+                        labels[-1] = EOS_ID
+                        all_tokens.append(tokens)
+                        all_labels.append(labels)
+                        all_classes.append(class_idx)
+
+                        tokens = np.zeros((self.max_seq_len, ))
+                        labels = np.zeros_like(tokens)
+                        tokens[0] = SOS_ID
+
+                labels[rel_index + 1] = EOS_ID
+                all_tokens.append(tokens)
+                all_labels.append(labels)
+                all_classes.append(class_idx)
+
+            # possibly empty sequences if max sequence length splits input exactly
+            if tokens.max() > 0.:
+                all_tokens.append(tokens)
+                all_labels.append(labels)
+                all_classes.append(class_idx)
+
+        self.tokens = mx.nd.array(np.concatenate(np.expand_dims(all_tokens, axis=0), axis=0))
+        self.labels = mx.nd.array(np.concatenate(np.expand_dims(all_tokens, axis=0), axis=0))
+        self.classes = mx.nd.array(all_classes)
+
+        print("Tokens.shape {}".format(self.tokens.shape))
+        print("Labels.shape {}".format(self.labels.shape))
+        print("classes.shape {}".format(self.classes.shape))
+
+        assert self.classes.size > 0, "Empty sequences were found"
 
     def __iter__(self):
         self.iter.reset()
         for batch in self.iter:
+
+            # estimate the sequence length of the batch
+            tokens = batch.data[0]
+            seq_lens = mx.nd.where(tokens != PAD_ID,
+                                   mx.nd.ones_like(tokens),
+                                   mx.nd.zeros_like(tokens)).sum(axis=1)
+
+            # insert it at the second position
+            batch.data.insert(1, seq_lens)
             yield batch
 
-def load_dataset(melodies: Dict[str, List[Melody]],
-                 split_percentage: float,
-                 batch_size: int):
-    assert 0.0 <= split_percentage < 1.0
 
-    if split_percentage == 0.0:
-        # use the training data as validation data per default
-        # todo: replace this with an optional validation path
-        dataset = MelodyDataset(batch_size, melodies)
-        return dataset, dataset
+def load_dataset(loader_train: Loader,
+                 batch_size: int,
+                 split_percentage: float = None,
+                 loader_val: Loader = None):
 
-    train_melodies, valid_melodies = {}, {}
-    for c, m in melodies.items():
+    if loader_val is not None:
+        train = MelodyDataset(batch_size, loader_train.max_sequence_length, loader_train.melodies)
+        val = MelodyDataset(batch_size, loader_val.max_sequence_length, loader_val.melodies)
+        return train, val
+
+    if split_percentage is None:
+        dataset = MelodyDataset(batch_size, loader_train.max_sequence_length, loader_train.melodies)
+        return dataset, None
+
+    assert 0.0 < split_percentage < 1.0
+
+    train_split, valid_split = {}, {}
+    for c, m in loader_train.melodies.items():
         n_validation_melodies = int(split_percentage * len(m))
-        valid_melodies[c] = m[:n_validation_melodies]
-        train_melodies[c] = m[n_validation_melodies:]
+        valid_split[c] = m[:n_validation_melodies]
+        train_split[c] = m[n_validation_melodies:]
 
-    return MelodyDataset(batch_size, train_melodies),  MelodyDataset(batch_size, valid_melodies)
+    return MelodyDataset(batch_size, loader_train.max_sequence_length, train_split),  MelodyDataset(batch_size, loader_train.max_sequence_length, valid_split)
 
 
 

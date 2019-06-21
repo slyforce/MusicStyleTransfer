@@ -1,4 +1,4 @@
-from music_style_transfer.MIDIUtil.MIDIReader import MIDIReader
+from music_style_transfer.MIDIUtil.midi_io import MIDIReader
 from music_style_transfer.MIDIUtil.MelodyWriter import MelodyWriter
 from music_style_transfer.MIDIUtil.Melody import Melody
 

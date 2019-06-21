@@ -1,8 +1,9 @@
 import mxnet as mx
 from mxnet.gluon.rnn import LSTM
-from mxnet.gluon.nn import Dense
+from mxnet.gluon.nn import Dense, Embedding
 
 from .config import Config
+
 
 class LSTMConfig(Config):
     def __init__(self,
@@ -15,123 +16,181 @@ class LSTMConfig(Config):
         self.dropout = dropout
 
 
+class DecoderConfig(Config):
+    def __init__(self,
+                 lstm_config: LSTMConfig,
+                 latent_dim: int,
+                 num_classes: int,
+                 output_dim: int):
+        super().__init__()
+        self.lstm_config = lstm_config
+        self.latent_dim = latent_dim
+        self.num_classes = num_classes
+        self.output_dim = output_dim
+
+
+class EncoderConfig(Config):
+    def __init__(self,
+                 lstm_config: LSTMConfig,
+                 latent_dim: int,
+                 num_classes: int,
+                 input_dim: int):
+        super().__init__()
+        self.lstm_config = lstm_config
+        self.latent_dim = latent_dim
+        self.num_classes = num_classes
+        self.input_dim = input_dim
+
+
 class EncoderDecoderConfig(Config):
     def __init__(self,
-                 latent_dimension: int,
-                 feature_dimension: int,
-                 input_classes: int,
-                 encoder_config: LSTMConfig,
-                 decoder_config: LSTMConfig):
+                 encoder_config: EncoderConfig,
+                 decoder_config: DecoderConfig):
         super().__init__()
-        self.latent_dimension = latent_dimension
-        self.feature_dimension = feature_dimension
-        self.input_classes = input_classes
         self.encoder_config = encoder_config
         self.decoder_config = decoder_config
 
 
-class EncoderDecoder(mx.gluon.HybridBlock):
-    def __init__(self, config: EncoderDecoderConfig):
+class Encoder(mx.gluon.HybridBlock):
+    def __init__(self, config: EncoderConfig):
         super().__init__()
         self.config = config
         with self.name_scope():
+            self.class2hid = Embedding(input_dim=self.config.num_classes,
+                                       output_dim=self.config.lstm_config.hidden_dim)
 
-            self.initial_conv = mx.gluon.nn.Conv2D(channels=32,
-                                                   kernel_size=(1, self.config.feature_dimension),
-                                                   strides=(1, self.config.feature_dimension),
-                                                   padding=(0, 0),
-                                                   layout='NCHW')
-            self.encoder = mx.gluon.nn.HybridSequential()
-            for i in range(self.config.encoder_config.n_layers):
-                input_size = 32 + self.config.input_classes if i == 0 else config.encoder_config.hidden_dim
-                self.encoder.add(LSTM(config.encoder_config.hidden_dim // 2,
-                                 1,
-                                 bidirectional=True,
-                                 dropout=config.encoder_config.dropout,
-                                 input_size=input_size,
-                                 layout='NTC'))
-                self.encoder.add(mx.gluon.nn.LayerNorm())
-            self.encoder.add(Dense(self.config.latent_dimension * 2,
-                                   flatten=False,
-                                   in_units=self.config.encoder_config.hidden_dim))
+            self.encoder_embedding = Embedding(input_dim=self.config.input_dim,
+                                               output_dim=self.config.lstm_config.hidden_dim)
 
-            self.decoder = mx.gluon.nn.HybridSequential()
-            for i in range(self.config.encoder_config.n_layers):
-                input_size = self.config.latent_dimension + self.config.input_classes if i == 0 else config.encoder_config.hidden_dim
-                self.decoder.add(LSTM(config.decoder_config.hidden_dim // 2,
-                                 1,
-                                 bidirectional=True,
-                                 dropout=config.decoder_config.dropout,
-                                 input_size=input_size,
-                                 layout='NTC'))
-                self.decoder.add(mx.gluon.nn.LayerNorm())
-            self.decoder.add(Dense(self.config.feature_dimension * 2,
-                                   flatten=False,
-                                   in_units=self.config.decoder_config.hidden_dim))
+            self.encoder = LSTM(self.config.lstm_config.hidden_dim, # // 2,
+                                self.config.lstm_config.n_layers,
+                                bidirectional=False,
+                                dropout=self.config.lstm_config.dropout,
+                                input_size=self.config.lstm_config.hidden_dim,
+                                layout='NTC')
+
+            self.latent_proj = Dense(in_units=self.config.lstm_config.hidden_dim,
+                                     units=self.config.latent_dim * 2)
+
+    def hybrid_forward(self, F, tokens, seq_length, classes):
+        """
+        :param tokens: (batch_size, max_seq_len)
+        :param seq_length: (batch_size,)
+        :param classes: (batch_size,)
+        :return:
+        """
+
+        # shape: (batch_size, max_seq_len, hidden_dim)
+        token_emb = self.encoder_embedding(tokens)
+
+        # shape: (batch_size, hidden_dim)
+        class_emb = self.class2hid(classes)
+
+        encoder_input = F.broadcast_add(F.expand_dims(class_emb, axis=1), token_emb)
+
+        # shape: (batch_size, max_seq_len, hidden_dim)
+        encoder_output = self.encoder(encoder_input)
+        
+        # shape: (batch_size, hidden_dim)
+        last_states = F.SequenceLast(encoder_output,
+                                     axis=1,
+                                     sequence_length=seq_length,
+                                     use_sequence_length=True)
+        
+        # shape: (batch_size, 2 * latent_dim)
+        latent_state = self.latent_proj(last_states)
+
+        # shape: (batch_size, latent_dim)
+        [means, stddevs] = F.split(latent_state, num_outputs=2, axis=1)
+        return means, stddevs
 
 
+class Decoder(mx.gluon.HybridBlock):
+    def __init__(self, config: DecoderConfig):
+        super().__init__()
+        self.config = config
+        self._define_parameters()
 
-    def hybrid_forward(self, F, tokens, articulations, enc_classes, dec_classes, noise):
-        # melodies: shape: (batch_size, seq_len, feature_dim)
-        # articulations: shape: (batch_size, seq_len, feature_dim)
-        # enc_classes: shape: (batch_size)
-        # dec_classes: shape: (batch_size)
-        # noise: shape: (batch_size, seq_len, noise_dim)
+    def _define_parameters(self):
+        with self.name_scope():
+            self.latent2hid = Dense(in_units=self.config.latent_dim,
+                                    units=self.config.lstm_config.hidden_dim * 2)
 
-        dec_classes, enc_classes = self._preprocess_classes(F, dec_classes, enc_classes, tokens)
-        tokens, x = self._preprocess_inputs(F, articulations, tokens)
+            self.class2hid = Embedding(input_dim=self.config.num_classes,
+                                       output_dim=self.config.lstm_config.hidden_dim * 2)
 
-        # shape: (batch_size, hidden_dim, seq_len)
-        x = F.squeeze(self.initial_conv(x), axis=3)
+            self.embedding = Embedding(input_dim=self.config.output_dim,
+                                       output_dim=self.config.lstm_config.hidden_dim)
 
-        # shape: (batch_size, seq_len, hidden_dim)
-        x = F.swapaxes(x, dim1=1, dim2=2)
+            self.decoder = LSTM(self.config.lstm_config.hidden_dim,  # // 2,
+                                self.config.lstm_config.n_layers,
+                                bidirectional=False,
+                                dropout=self.config.lstm_config.dropout,
+                                input_size=self.config.lstm_config.hidden_dim,
+                                layout='NTC')
 
-        # shape: (batch_size, seq_len, hidden_dim + input_classes)
-        x = F.concat(x, self.one_hot(F, enc_classes), dim=2)
+            self.output_layer = Dense(in_units=self.config.lstm_config.hidden_dim,
+                                      units=self.config.output_dim,
+                                      flatten=False)
 
-        z_values = self.encoder(x)
-        [z_means, z_stddev] = F.split(z_values, num_outputs=2, axis=2)
 
-        # shape: (batch_size, seq_len, noise_dim)
-        z = z_means + z_stddev * noise
-        z = F.concat(z, self.one_hot(F, dec_classes), dim=2)
+class TrainingDecoder(Decoder):
+    def __init__(self, config: DecoderConfig):
+        super().__init__(config)
 
-        # shape: (batch_size, seq_len, feature_dim + 1)
-        z = self.decoder(z)
+    def hybrid_forward(self, F, tokens, seq_length, hidden_states, classes):
+        init_state = self._get_initial_state(F, classes, hidden_states)
 
-        [out_pitches, out_articulations] = F.split(z, num_outputs=2, axis=2)
-        return out_pitches, out_articulations, z_means, z_stddev
-
-    def _preprocess_classes(self, F, dec_classes, enc_classes, tokens):
-        # shape: (batch_size, 1)
-        enc_classes = F.expand_dims(enc_classes, axis=1)
-        # shape: (batch_size, seq_len)
-        enc_classes = F.broadcast_like(enc_classes, tokens.sum(axis=2), lhs_axes=(1,), rhs_axes=(1,))
-        # shape: (batch_size, 1)
-        dec_classes = F.expand_dims(dec_classes, axis=1)
-        # shape: (batch_size, seq_len)
-        dec_classes = F.broadcast_like(dec_classes, tokens.sum(axis=2), lhs_axes=(1,), rhs_axes=(1,))
-        return dec_classes, enc_classes
-
-    def _preprocess_inputs(self, F, articulations, melodies):
         # shape: (batch_size, seq_len, feature_dim)
-        articulations = F.expand_dims(articulations, axis=3)
-        melodies = F.expand_dims(melodies, axis=3)
-        # shape: (batch_size, seq_len, feature_dim, 2)
-        melodies = F.concat(melodies, articulations, dim=3)
-        # shape: (batch_size, 2, feature_dim, seq_len)
-        x = F.swapaxes(melodies, dim1=1, dim2=3)
-        # shape: (batch_size, 2, seq_len, feature_dim)
-        x = F.swapaxes(x, dim1=2, dim2=3)
-        return melodies, x
+        token_embeddings = self.embedding(tokens)
 
-    def one_hot(self, F, input):
-        return F.one_hot(
-            F.cast(input, 'int32'),
-            depth=self.config.input_classes,
-            on_value=1.,
-            off_value=0.)
+        # shape: (batch_size, seq_len, feature_dim)
+        lstm_outputs = self.decoder(token_embeddings, init_state)[0]
+
+        # shape: (batch_size, seq_len, output_dim)
+        probs = F.softmax(self.output_layer(lstm_outputs), axis=-1)
+        return probs
+
+    def _get_initial_state(self, F, classes, hidden_state):
+        transform = self.latent2hid(hidden_state) + self.class2hid(classes)
+        transform = F.repeat(mx.nd.expand_dims(transform, axis=0),
+                             axis=0,
+                             repeats=self.config.lstm_config.n_layers)
+        init_states = F.split(transform, axis=2, squeeze_axis=False, num_outputs=2)
+
+        # shape (in each) (num_layers, batch_size, lstm_dim)
+        return init_states
+
+
+class InferenceDecoder(Decoder):
+    def __init__(self, config: DecoderConfig):
+        super().__init__(config)
+
+    def hybrid_forward(self, F, tokens, seq_length, hidden_states, classes):
+        # performs one step of the recurrency
+        raise NotImplemented
+
+
+class TrainingModel(mx.gluon.HybridBlock):
+
+    def __init__(self,
+                 decoder_config: DecoderConfig,
+                 encoder_config: EncoderConfig):
+        super().__init__()
+        self.decoder = TrainingDecoder(decoder_config)
+        self.encoder = Encoder(encoder_config)
+
+    def hybrid_forward(self, F, tokens, seq_lens, classes):
+
+        # encode the inputs
+        means, vars = self.encoder(tokens, seq_lens, classes)
+
+        # sample in the hidden space
+        z_sampled = means + mx.nd.random_normal(loc=0, scale=1., shape=means.shape) * vars
+
+        # now decode the sequence
+        probs = self.decoder(tokens, seq_lens, z_sampled, classes)
+        return probs, means, vars
 
 
 

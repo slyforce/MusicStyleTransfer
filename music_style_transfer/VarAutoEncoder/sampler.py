@@ -1,8 +1,6 @@
 import mxnet as mx
 from VarAutoEncoder.data import Loader, MelodyDataset, Dataset
 from music_style_transfer.MIDIUtil.Melody import Melody
-from music_style_transfer.MIDIUtil.MelodyWriter import MelodyWriter
-from music_style_transfer.MIDIUtil.Note import Note
 from . import config
 from . import model
 from . import utils
@@ -45,14 +43,13 @@ def setup():
 
 class Sampler:
     def __init__(self,
-                 model: model.EncoderDecoder,
+                 model: model.Decoder,
                  context: mx.Context,
                  output_path: str,
                  visualize_samples: bool = True):
         self.model = model
         self.context = context
         self.visualize_samples = visualize_samples
-        self.melody_writer = MelodyWriter()
         self.output_path = output_path
 
     def _generate_var_ae_noise(self, batch_size, seq_len, set_to_zero=False):
