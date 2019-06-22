@@ -8,7 +8,7 @@ from .sampler import Sampler
 
 
 def create_toy_model_config(data):
-    return model.EncoderDecoderConfig(
+    return model.ModelConfig(
         encoder_config=model.EncoderConfig(
             lstm_config=model.LSTMConfig(
                 n_layers=1,
@@ -80,7 +80,7 @@ def create_train_config(args):
 
 
 def create_model_config(args, dataset: Dataset):
-    return model.EncoderDecoderConfig(
+    return model.ModelConfig(
         encoder_config=model.EncoderConfig(
             lstm_config=model.LSTMConfig(
                 n_layers=args.e_n_layers,

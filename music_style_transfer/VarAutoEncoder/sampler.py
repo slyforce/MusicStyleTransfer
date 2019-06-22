@@ -1,18 +1,118 @@
 import mxnet as mx
 from VarAutoEncoder.data import Loader, MelodyDataset, Dataset
 from music_style_transfer.MIDIUtil.Melody import Melody
+from music_style_transfer.MIDIUtil.defaults import *
+
 from . import config
 from . import model
 from . import utils
 
+
 import os
 
-def load_model(model_folder: str,
-               context: mx.Context,
-               checkpoint: int):
-    m = model.EncoderDecoder(config.Config.load(model_folder + '/config'))
-    utils.load_model_parameters(m, model_folder + '/params.{}'.format(checkpoint), context)
-    return m
+
+def load_inference_model(model_folder: str,
+                         context: mx.Context,
+                         checkpoint: int):
+
+    # 1. load the configuration
+    c = config.Config.load(os.path.join(model_folder, 'config')) # type: model.ModelConfig
+    encoder = model.Encoder(c.encoder_config)
+    decoder = model.InferenceDecoder(c.decoder_config)
+
+    # 2. load the parameters
+    params_fname = os.path.join(model_folder, 'params.{}'.format(checkpoint))
+    utils.load_model_parameters(encoder, params_fname, context)
+    utils.load_model_parameters(decoder, params_fname, context)
+    return encoder, decoder
+
+
+class SamplerBase:
+    def __init__(self,
+                 encoder: model.Encoder,
+                 decoder: model.InferenceDecoder,
+                 context: mx.Context):
+        self.encoder = encoder
+        self.decoder = decoder
+        self.context = context
+
+    def _check_input(self, batch: mx.io.DataBatch):
+        at_least_one_error = False
+
+        if len(batch.data) != 3:
+            at_least_one_error = True
+
+        if len(batch.label) != 1:
+            at_least_one_error = True
+
+        if at_least_one_error:
+            raise ValueError("Input to sampler is wrong: {}".format(batch))
+
+    def read_batch(self, batch: mx.io.DataBatch):
+        data = [x.as_in_context(self.context) for x in batch.data]
+        labels = [x.as_in_context(self.context) for x in batch.label]
+        return data, labels
+
+    def sample(self, data_batch: mx.io.DataBatch):
+        self._check_input(data_batch)
+        raise NotImplemented
+
+    def compute_initial_decoder_state(self, tokens, seq_lens, classes):
+        means, vars = self.encoder(tokens, seq_lens, classes)
+        # todo: implement more variants of this
+        latent_vector = means
+
+        return self.decoder.get_initial_state(mx.nd, classes, latent_vector)
+
+
+class Sampling(SamplerBase):
+    def __init__(self,
+                 *args,
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def sample(self, data_batch: mx.io.DataBatch):
+        self._check_input(data_batch)
+        [tokens, seq_lens, classes], _ = self.read_batch(data_batch)
+
+        I_max = mx.nd.max(seq_lens) * 2 # todo: do not hard-code this
+        beam_size = tokens.shape[0]
+
+        sequences = mx.nd.zeros((beam_size, I_max))
+        sequences[:, 0] = SOS_ID
+        scores = mx.nd.zeros((beam_size,))
+
+        previous_decoder_state = self.compute_initial_decoder_state(tokens, seq_lens, classes)
+
+        for i in range(1, I_max):
+
+            prev_tokens = sequences[:,i-1]
+            probs, next_states = self.decoder(prev_tokens, previous_decoder_state, classes, i)
+
+            next_outputs = mx.nd.random.multinomial(probs)
+
+            sequences[:, i] = next_outputs
+            scores += mx.nd.pick(probs, next_outputs)
+
+            previous_decoder_state = next_states
+
+        return sequences
+
+
+class BeamSearchSampler(SamplerBase):
+    def __init__(self,
+                 beam_size: int,
+                 *args,
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+        self.beam_size = beam_size
+
+    def sample(self, data_batch: mx.io.DataBatch):
+        raise NotImplemented
+
+
+
+
 
 
 def setup():
@@ -28,9 +128,9 @@ def setup():
 
     context = mx.gpu() if args.gpu else mx.cpu()
 
-    m = load_model(args.model_output,
-                   context,
-                   args.load_checkpoint)
+    m = load_inference_model(args.model_output,
+                             context,
+                             args.load_checkpoint)
 
     utils.create_directory_if_not_present(args.out_samples)
 

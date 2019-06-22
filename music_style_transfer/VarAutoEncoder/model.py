@@ -42,7 +42,7 @@ class EncoderConfig(Config):
         self.input_dim = input_dim
 
 
-class EncoderDecoderConfig(Config):
+class ModelConfig(Config):
     def __init__(self,
                  encoder_config: EncoderConfig,
                  decoder_config: DecoderConfig):
@@ -133,13 +133,23 @@ class Decoder(mx.gluon.HybridBlock):
                                       units=self.config.output_dim,
                                       flatten=False)
 
+    def get_initial_state(self, F, classes, hidden_state):
+        transform = self.latent2hid(hidden_state) + self.class2hid(classes)
+        transform = F.repeat(mx.nd.expand_dims(transform, axis=0),
+                             axis=0,
+                             repeats=self.config.lstm_config.n_layers)
+        init_states = F.split(transform, axis=2, squeeze_axis=False, num_outputs=2)
+
+        # shape (in each) (num_layers, batch_size, lstm_dim)
+        return init_states
+
 
 class TrainingDecoder(Decoder):
     def __init__(self, config: DecoderConfig):
         super().__init__(config)
 
     def hybrid_forward(self, F, tokens, seq_length, hidden_states, classes):
-        init_state = self._get_initial_state(F, classes, hidden_states)
+        init_state = self.get_initial_state(F, classes, hidden_states)
 
         # shape: (batch_size, seq_len, feature_dim)
         token_embeddings = self.embedding(tokens)
@@ -151,22 +161,12 @@ class TrainingDecoder(Decoder):
         probs = F.softmax(self.output_layer(lstm_outputs), axis=-1)
         return probs
 
-    def _get_initial_state(self, F, classes, hidden_state):
-        transform = self.latent2hid(hidden_state) + self.class2hid(classes)
-        transform = F.repeat(mx.nd.expand_dims(transform, axis=0),
-                             axis=0,
-                             repeats=self.config.lstm_config.n_layers)
-        init_states = F.split(transform, axis=2, squeeze_axis=False, num_outputs=2)
-
-        # shape (in each) (num_layers, batch_size, lstm_dim)
-        return init_states
-
 
 class InferenceDecoder(Decoder):
     def __init__(self, config: DecoderConfig):
         super().__init__(config)
 
-    def hybrid_forward(self, F, tokens, seq_length, hidden_states, classes):
+    def hybrid_forward(self, F, tokens, previous_state, classes, step):
         # performs one step of the recurrency
         raise NotImplemented
 
@@ -174,11 +174,10 @@ class InferenceDecoder(Decoder):
 class TrainingModel(mx.gluon.HybridBlock):
 
     def __init__(self,
-                 decoder_config: DecoderConfig,
-                 encoder_config: EncoderConfig):
+                 config: ModelConfig):
         super().__init__()
-        self.decoder = TrainingDecoder(decoder_config)
-        self.encoder = Encoder(encoder_config)
+        self.decoder = TrainingDecoder(config.decoder_config)
+        self.encoder = Encoder(config.encoder_config)
 
     def hybrid_forward(self, F, tokens, seq_lens, classes):
 
