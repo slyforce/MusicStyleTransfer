@@ -1,6 +1,8 @@
 import mxnet as mx
 from VarAutoEncoder.data import ToyData, Loader, Dataset, load_dataset
+from VarAutoEncoder.utils import log_config, log_model_variables
 from music_style_transfer.VarAutoEncoder import model
+from .transformer import TransformerConfig
 from music_style_transfer.VarAutoEncoder import trainer
 from .config import get_config
 from .utils import create_directory_if_not_present
@@ -8,13 +10,16 @@ from .sampler import get_sampler
 
 import os
 
+
 def create_toy_model_config(data):
     return model.ModelConfig(
         encoder_config=model.EncoderConfig(
-            lstm_config=model.LSTMConfig(
-                n_layers=1,
-                hidden_dim=32,
-                dropout=0.0),
+            transformer_config=TransformerConfig(
+                model_size=32,
+                dropout=0.0,
+                num_layers=1,
+                vocab_size=data.num_tokens(),
+                num_heads=2),
             latent_dim=16,
             num_classes=data.num_classes(),
             input_dim=data.num_tokens(),
@@ -44,7 +49,7 @@ def create_toy_train_config():
                                  ),
                                  label_smoothing=0.0,
                                  negative_label_downscaling=True,
-                                 verbose=True)
+                                 verbose=False)
     return config
 
 
@@ -89,10 +94,12 @@ def create_train_config(args):
 def create_model_config(args, dataset: Dataset):
     return model.ModelConfig(
         encoder_config=model.EncoderConfig(
-            lstm_config=model.LSTMConfig(
-                n_layers=args.e_n_layers,
-                hidden_dim=args.e_rnn_hidden_dim,
-                dropout=args.e_dropout),
+            transformer_config=TransformerConfig(
+                model_size=args.e_rnn_hidden_dim,
+                dropout=args.e_dropout,
+                num_layers=args.e_n_layers,
+                vocab_size=dataset.num_tokens(),
+                num_heads=args.e_num_heads),
             latent_dim=args.latent_dim,
             num_classes=dataset.num_classes(),
             input_dim=dataset.num_tokens(),
@@ -112,6 +119,7 @@ def create_model_config(args, dataset: Dataset):
 
 def main():
     args = get_config()
+    context = mx.gpu() if args.gpu else mx.cpu()
 
     if args.toy:
         main_toy()
@@ -138,15 +146,17 @@ def main():
 
     config = create_model_config(args, train_dataset)
     config.save(args.model_output + '/config')
+    log_config(config)
 
-    context = mx.gpu() if args.gpu else mx.cpu()
     m = model.Model(config=config)
+    log_model_variables(m)
 
     sampler = get_sampler('sampling',
                           args.model_output,
                           context,
                           None,
                           args)
+
 
     t = trainer.Trainer(config=create_train_config(args),
                         context=context,
@@ -159,6 +169,7 @@ def main():
           epochs=args.epochs)
 
     print("Training finished.")
+
 
 if __name__ == '__main__':
     main()

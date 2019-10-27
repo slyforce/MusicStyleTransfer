@@ -114,11 +114,15 @@ class MelodyDataset(Dataset):
                                       batch_size=self.batch_size, shuffle=True)
 
     def _log_dataset(self):
+        print("")
+        print("Dataset information: ")
+        print("Number of classes: {}".format(self.num_classes()))
+        print("Number of tokens: {}".format(self.num_tokens()))
         print("Tokens dataset shape {}".format(self.tokens.shape))
         print("Classes dataset shape {}".format(self.classes.shape))
         for c, m in self.melodies.items():
             print("Class {} has {} melodies of maximum length {}".format(c, len(m), self.seen_max_sequence_length ))
-
+        print("")
     def num_classes(self):
         return self.n_classes
 
@@ -137,7 +141,7 @@ class MelodyDataset(Dataset):
                     rel_index = j % self.max_seq_len
                     tokens[rel_index] = FEATURE_OFFSET + event.id
 
-                    if rel_index == self.max_seq_len:
+                    if rel_index == self.max_seq_len-1:
                         all_tokens.append(tokens)
                         all_classes.append(class_idx)
                         tokens = np.full((self.max_seq_len,), fill_value=PAD_ID)

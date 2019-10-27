@@ -1,3 +1,4 @@
+import pprint
 from typing import List
 
 from music_style_transfer.MIDIUtil.defaults import *
@@ -35,8 +36,11 @@ def visualize_melody(melody: Melody, offset: int = -1):
     mpl.show()
 
 
+def log_config(config):
+    pprint.pprint("Using configuration: ")
+    pprint.pprint(config)
 
 
-
-
-
+def log_model_variables(model):
+    print("Model variables: ")
+    pprint.pprint(model.collect_params())

@@ -22,6 +22,7 @@ net_arg.add_argument('--e-n-layers', type=int, default=1)
 net_arg.add_argument('--e-rnn-hidden-dim', type=int, default=128)
 net_arg.add_argument('--e-emb-hidden-dim', type=int, default=64)
 net_arg.add_argument('--e-dropout', type=float, default=0.0)
+net_arg.add_argument('--e-num-heads', type=int, default=8)
 
 net_arg.add_argument('--latent-dim', type=int, default=64)
 

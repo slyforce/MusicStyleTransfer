@@ -20,7 +20,10 @@ def load_inference_model(model_folder: str,
 
     # 1. load the configuration
     c = config.Config.load(os.path.join(model_folder, 'config')) # type: model.ModelConfig
+    utils.log_config(c)
+
     m = model.Model(c)
+    utils.log_model_variables(m)
 
     if checkpoint is None:
         return m
@@ -259,7 +262,6 @@ class BeamSearchSampler(SamplerBase):
 from .data import ToyData
 
 def sample_toy(args):
-    print(args)
     sampler = get_sampler("sampling",
                           args.model_output,
                           mx.cpu(),

@@ -3,6 +3,7 @@ from mxnet.gluon.rnn import LSTM
 from mxnet.gluon.nn import Dense, Embedding
 
 from .config import Config
+from .transformer import TransformerEncoder, TransformerConfig
 
 
 class LSTMConfig(Config):
@@ -31,12 +32,12 @@ class DecoderConfig(Config):
 
 class EncoderConfig(Config):
     def __init__(self,
-                 lstm_config: LSTMConfig,
+                 transformer_config: TransformerConfig,
                  latent_dim: int,
                  num_classes: int,
                  input_dim: int):
         super().__init__()
-        self.lstm_config = lstm_config
+        self.transformer_config = transformer_config
         self.latent_dim = latent_dim
         self.num_classes = num_classes
         self.input_dim = input_dim
@@ -57,19 +58,14 @@ class Encoder(mx.gluon.HybridBlock):
         self.config = config
         with self.name_scope():
             self.class2hid = Embedding(input_dim=self.config.num_classes,
-                                       output_dim=self.config.lstm_config.hidden_dim)
+                                       output_dim=self.config.transformer_config.model_size)
 
             self.encoder_embedding = Embedding(input_dim=self.config.input_dim,
-                                               output_dim=self.config.lstm_config.hidden_dim)
+                                               output_dim=self.config.transformer_config.model_size)
 
-            self.encoder = LSTM(self.config.lstm_config.hidden_dim, # // 2,
-                                self.config.lstm_config.n_layers,
-                                bidirectional=False,
-                                dropout=self.config.lstm_config.dropout,
-                                input_size=self.config.lstm_config.hidden_dim,
-                                layout='NTC')
+            self.encoder = TransformerEncoder(self.config.transformer_config)
 
-            self.latent_proj = Dense(in_units=self.config.lstm_config.hidden_dim,
+            self.latent_proj = Dense(in_units=self.config.transformer_config.model_size,
                                      units=self.config.latent_dim * 2)
 
     def hybrid_forward(self, F, tokens, seq_length, classes):
@@ -80,6 +76,10 @@ class Encoder(mx.gluon.HybridBlock):
         :return:
         """
 
+        mask = mx.nd.where(tokens != 0,
+                           mx.nd.ones_like(tokens),
+                           mx.nd.zeros_like(tokens))
+
         # shape: (batch_size, max_seq_len, hidden_dim)
         token_emb = self.encoder_embedding(tokens)
 
@@ -89,14 +89,11 @@ class Encoder(mx.gluon.HybridBlock):
         encoder_input = F.broadcast_add(F.expand_dims(class_emb, axis=1), token_emb)
 
         # shape: (batch_size, max_seq_len, hidden_dim)
-        encoder_output = self.encoder(encoder_input)
-        
+        encoder_output = self.encoder(encoder_input, mask)
+
         # shape: (batch_size, hidden_dim)
-        last_states = F.SequenceLast(encoder_output,
-                                     axis=1,
-                                     sequence_length=seq_length,
-                                     use_sequence_length=True)
-        
+        last_states = encoder_output[:,0,:]
+
         # shape: (batch_size, 2 * latent_dim)
         latent_state = self.latent_proj(last_states)
 
