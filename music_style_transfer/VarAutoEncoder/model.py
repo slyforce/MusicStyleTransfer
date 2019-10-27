@@ -106,8 +106,8 @@ class Encoder(mx.gluon.HybridBlock):
 
 
 class Decoder(mx.gluon.HybridBlock):
-    def __init__(self, config: DecoderConfig):
-        super().__init__()
+    def __init__(self, config: DecoderConfig, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.config = config
         self._define_parameters()
 
@@ -143,12 +143,10 @@ class Decoder(mx.gluon.HybridBlock):
         # shape (in each) (num_layers, batch_size, lstm_dim)
         return init_states
 
+    def hybrid_forward(self, F,  tokens, seq_length, hidden_states, classes):
+        return self.forward_train(F, tokens, seq_length, hidden_states, classes)
 
-class TrainingDecoder(Decoder):
-    def __init__(self, config: DecoderConfig):
-        super().__init__(config)
-
-    def hybrid_forward(self, F, tokens, seq_length, hidden_states, classes):
+    def forward_train(self, F, tokens, seq_length, hidden_states, classes):
         init_state = self.get_initial_state(F, classes, hidden_states)
 
         # shape: (batch_size, seq_len, feature_dim)
@@ -161,23 +159,36 @@ class TrainingDecoder(Decoder):
         probs = F.softmax(self.output_layer(lstm_outputs), axis=-1)
         return probs
 
-
-class InferenceDecoder(Decoder):
-    def __init__(self, config: DecoderConfig):
-        super().__init__(config)
-
-    def hybrid_forward(self, F, tokens, previous_state, classes, step):
+    def forward_inference(self, tokens, previous_state, classes, step):
         # performs one step of the recurrency
-        raise NotImplemented
+
+        # shape: (batch-size, 1)
+        tokens = mx.nd.expand_dims(tokens, axis=1)
+
+        # shape: (batch_size, 1, feature_dim)
+        token_embeddings = self.embedding(tokens)
+
+        # shape: (batch_size, 1, feature_dim)
+        lstm_outputs, next_states = self.decoder(token_embeddings, previous_state)
+
+        # shape: (batch_size, 1, output_dim)
+        probs = mx.nd.softmax(self.output_layer(lstm_outputs), axis=-1)
+
+        # shape: (batch_size, 1, output_dim)
+        probs = mx.nd.reshape(probs, (0, -1))
+
+        return probs, next_states
 
 
-class TrainingModel(mx.gluon.HybridBlock):
+class Model(mx.gluon.HybridBlock):
 
     def __init__(self,
-                 config: ModelConfig):
-        super().__init__()
-        self.decoder = TrainingDecoder(config.decoder_config)
-        self.encoder = Encoder(config.encoder_config)
+                 config: ModelConfig,
+                 *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        with self.name_scope():
+            self.decoder = Decoder(config.decoder_config)
+            self.encoder = Encoder(config.encoder_config)
 
     def hybrid_forward(self, F, tokens, seq_lens, classes):
 
@@ -188,7 +199,7 @@ class TrainingModel(mx.gluon.HybridBlock):
         z_sampled = means + mx.nd.random_normal(loc=0, scale=1., shape=means.shape) * vars
 
         # now decode the sequence
-        probs = self.decoder(tokens, seq_lens, z_sampled, classes)
+        probs = self.decoder.forward_train(F, tokens, seq_lens, z_sampled, classes)
         return probs, means, vars
 
 

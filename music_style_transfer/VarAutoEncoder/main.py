@@ -4,8 +4,9 @@ from music_style_transfer.VarAutoEncoder import model
 from music_style_transfer.VarAutoEncoder import trainer
 from .config import get_config
 from .utils import create_directory_if_not_present
-from .sampler import Sampler
+from .sampler import get_sampler
 
+import os
 
 def create_toy_model_config(data):
     return model.ModelConfig(
@@ -42,15 +43,20 @@ def create_toy_train_config():
                                      optimizer_params='clip_gradient:1.0',
                                  ),
                                  label_smoothing=0.0,
-                                 negative_label_downscaling=True)
+                                 negative_label_downscaling=True,
+                                 verbose=True)
     return config
 
 
 def main_toy():
     dataset = ToyData()
 
-    m = model.TrainingModel(decoder_config=create_toy_model_config(dataset).decoder_config,
-                            encoder_config=create_toy_model_config(dataset).encoder_config)
+    config = create_toy_model_config(dataset)
+    m = model.Model(config=config)
+    model_folder = "/tmp/music-style-transfer/toy/model"
+
+    create_directory_if_not_present(model_folder)
+    config.save(os.path.join(model_folder, 'config'))
 
     t = trainer.Trainer(config=create_toy_train_config(),
                         context=mx.cpu(),
@@ -59,7 +65,7 @@ def main_toy():
 
     t.fit(dataset=dataset,
           validation_dataset=dataset,
-          model_folder='/tmp/out',
+          model_folder=model_folder,
           epochs=20000)
 
 
@@ -75,7 +81,8 @@ def create_train_config(args):
                                      optimizer_params=args.optimizer_params,
                                  ),
                                  label_smoothing=args.label_smoothing,
-                                 negative_label_downscaling=args.negative_label_downscaling)
+                                 negative_label_downscaling=args.negative_label_downscaling,
+                                 verbose=args.verbose)
     return config
 
 
@@ -133,18 +140,18 @@ def main():
     config.save(args.model_output + '/config')
 
     context = mx.gpu() if args.gpu else mx.cpu()
-    m = model.TrainingModel(encoder_config=config.encoder_config,
-                            decoder_config=config.decoder_config)
+    m = model.Model(config=config)
 
-    sampler = Sampler(model=m,
-                      context=context,
-                      visualize_samples=args.visualize_samples,
-                      output_path=args.out_samples)
+    sampler = get_sampler('sampling',
+                          args.model_output,
+                          context,
+                          None,
+                          args)
 
     t = trainer.Trainer(config=create_train_config(args),
                         context=context,
                         model=m,
-                        sampler=None)
+                        sampler=sampler)
 
     t.fit(dataset=train_dataset,
           validation_dataset=valid_dataset,
@@ -154,6 +161,4 @@ def main():
     print("Training finished.")
 
 if __name__ == '__main__':
-    #main_toy()
-    #exit(0)
     main()

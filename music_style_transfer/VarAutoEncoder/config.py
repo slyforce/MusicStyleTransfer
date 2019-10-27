@@ -50,6 +50,8 @@ train_arg.add_argument('--validation-split', type=float, default=0.1)
 train_arg.add_argument('--kl-loss', type=float, default=1.0)
 train_arg.add_argument('--label-smoothing', type=float, default=0.0)
 train_arg.add_argument('--negative-label-downscaling', action='store_true')
+train_arg.add_argument('--beam-size', type=int, default=5)
+train_arg.add_argument('--sampling-type', choices=["beam-search", "sampling"], default="sampling")
 
 
 # Misc
@@ -58,11 +60,13 @@ misc_arg.add_argument('--load-checkpoint', type=int, default=1)
 misc_arg.add_argument('--checkpoint-frequency', type=int, default=5000)
 misc_arg.add_argument('--sampling-frequency', type=int, default=1000)
 misc_arg.add_argument('--num-checkpoints-not-improved', type=int, default=10)
-misc_arg.add_argument('--out-samples', type=str, default=None)
-misc_arg.add_argument('--model-output', type=str, default='models')
+misc_arg.add_argument('--out-samples', '-o', type=str, default=None)
+misc_arg.add_argument('--model-output', '-m', type=str, default='models')
+misc_arg.add_argument('--checkpoint', '-c', type=int, default=-1)
 misc_arg.add_argument('--gpu', action='store_true')
 misc_arg.add_argument('--toy', action='store_true')
 misc_arg.add_argument('--visualize-samples', action='store_true')
+misc_arg.add_argument('--verbose',  action='store_true')
 
 
 def get_config():
@@ -197,3 +201,18 @@ class Config(yaml.YAMLObject, metaclass=TaggedYamlObjectMetaclass):
         for name, value in kwargs.items():
             object.__setattr__(copy_obj, name, value)
         return copy_obj
+
+    def set_attrs(self, attrs):
+        """ Adds all attrs to self, used in constructor e.gl:
+        self.set_attrs(locals()) """
+        for k, v in attrs.items():
+            if k == 'self' and self == v:
+                # Ignore self
+                pass
+            elif hasattr(self, k):
+                print(
+                    'Not automatically over writing setting '
+                    '%s, %s. %s is already defined for Object %s' %
+                    (k, str(v), k, self))
+            else:
+                setattr(self, k, v)

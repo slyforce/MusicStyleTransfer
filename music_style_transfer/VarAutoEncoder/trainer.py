@@ -6,7 +6,9 @@ from VarAutoEncoder import data
 from mxboard import *
 from mxnet import autograd
 from mxnet import gluon
-from . import model, loss, utils, sampler
+from . import model, loss, utils, sampler, metrics
+
+import os
 
 
 class OptimizerConfig:
@@ -42,7 +44,8 @@ class TrainConfig:
                  optimizer: OptimizerConfig,
                  kl_loss: float,
                  label_smoothing: float,
-                 negative_label_downscaling: bool):
+                 negative_label_downscaling: bool,
+                 verbose: bool):
         self.batch_size = batch_size
         self.sampling_frequency = sampling_frequency
         self.checkpoint_frequency = checkpoint_frequency
@@ -51,6 +54,7 @@ class TrainConfig:
         self.kl_loss_weight = kl_loss
         self.label_smoothing = label_smoothing
         self.negative_label_downscaling = negative_label_downscaling
+        self.verbose = verbose
 
 
 class TrainingState:
@@ -65,8 +69,8 @@ class Trainer:
     def __init__(self,
                  config: TrainConfig,
                  context: mx.Context,
-                 model: model.TrainingModel,
-                 sampler: sampler.Sampler):
+                 model: model.Model,
+                 sampler: sampler.SamplerBase):
         self.config = config
         self.context = context
         self.model = model
@@ -105,12 +109,13 @@ class Trainer:
             return pred.sum(), pred.size
 
         self.tokens_metric_ppl = mx.metric.Perplexity(name='ppl', ignore_label=0)
-        self.tokens_metric_acc = mx.metric.Accuracy(name='acc', axis=2)
+        self.tokens_metric_acc = metrics.Accuracy(name="acc", axis=2, ignore_label=0)
+        self.tokens_metric_topk = metrics.TopKAccuracy(name="topk", top_k=5, ignore_label=0)
 
         self.kl_metric = mx.metric.CustomMetric(mean, name='kl_loss')
         self.main_metric = mx.metric.CustomMetric(mean, name='total_loss')
 
-        self.metrics = [self.tokens_metric_ppl, self.tokens_metric_acc,
+        self.metrics = [self.tokens_metric_ppl, self.tokens_metric_acc, self.tokens_metric_topk,
                         self.kl_metric, self.main_metric]
         self._reset_metrics()
 
@@ -132,9 +137,6 @@ class Trainer:
                 if self.train_state.n_batches % 50 == 0:
                     self._periodic_log(epoch, start_time)
 
-                if self.sampler is not None and self.config.sampling_frequency > 0 and self.train_state.n_batches % self.config.sampling_frequency == 0:
-                    self.sampler.sample_batch(batch, dataset.num_classes(), 'iter-{}'.format(self.train_state.n_batches))
-
                 if self.train_state.n_batches % self.config.checkpoint_frequency == 0:
                     self._checkpoint(model_folder, validation_dataset)
 
@@ -142,10 +144,22 @@ class Trainer:
                         print("Maximum checkpoints not improved reached. Stopping training.")
                         return
 
+                if self.sampler is not None and self.config.sampling_frequency > 0 and self.train_state.n_batches % self.config.sampling_frequency == 0:
+                    self.sampler.update_parameters(self.model)
+                    self.sampler.process_batch(batch,
+                                               os.path.join(model_folder, 'samples/step-{}'.format(self.train_state.n_batches)),
+                                               dataset.num_classes())
+
     def _step(self, batch, is_train=True):
         [tokens, seq_lens, classes] = [x.as_in_context(self.context) for x in batch.data]
         [labels] = [x.as_in_context(self.context) for x in batch.label]
         batch_size, seq_len = tokens.shape
+
+        if self.config.verbose:
+            print("Step {}".format(self.train_state.n_batches))
+            print("tokens:  {}, {}".format(tokens.shape, tokens))
+            print("classes: {}, {}".format(classes.shape, classes))
+            print("labels:  {}, {}".format(labels.shape, labels))
 
         # forward, todo: remove autograd in inference mode
         with autograd.record():
@@ -154,7 +168,6 @@ class Trainer:
             ce_loss = self.token_loss(probs, labels)
             kl_loss = self.kl_loss(z_means, z_vars)
             loss = ce_loss + self.config.kl_loss_weight * kl_loss
-            #print(ce_loss, kl_loss, loss)
 
         # backward + update
         if is_train:
@@ -166,6 +179,7 @@ class Trainer:
     def _update_metrics(self, kl_loss, labels, loss, probs):
         self.tokens_metric_ppl.update(labels, probs)
         self.tokens_metric_acc.update(labels, probs)
+        self.tokens_metric_topk.update(labels, probs)
         self.kl_metric.update(mx.nd.ones_like(kl_loss), kl_loss)
         self.main_metric.update(mx.nd.ones_like(loss), loss)
 

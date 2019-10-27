@@ -32,39 +32,6 @@ class Melody:
         return melody
 
 
-class EventInformation:
-
-    note_on_events = (0, 127)
-    note_off_events = (note_on_events[1] + 1,
-                       note_on_events[1] + 128)
-
-    timeshift_events = (note_off_events[1] + 1,
-                        note_off_events[1] + NUM_BINS)
-
-    @staticmethod
-    def create_note_on_event(pitch: int):
-        return NoteOnEvent(EventInformation.note_on_events[0] + pitch)
-
-    @staticmethod
-    def create_note_off_event(pitch: int):
-        return NoteOffEvent(EventInformation.note_off_events[0] + pitch)
-
-    @staticmethod
-    def create_timeshift_event(timeshift_ticks: int):
-        assert MIN_TICKS <= timeshift_ticks < MAX_TICKS, \
-            "Time shift must be between {} ticks and {} ticks. It is {}.".format(MIN_TICKS,
-                                                                                 MAX_TICKS,
-                                                                                 timeshift_ticks)
-
-
-        binned_shift = (timeshift_ticks - MIN_TICKS) / NUM_TICKS_IN_A_BIN
-        return TimeshiftEvent(EventInformation.timeshift_events[0] + binned_shift)
-
-    @staticmethod
-    def num_events():
-        return EventInformation.timeshift_events[1]
-
-
 class Event:
     def __init__(self, id):
         self.id = id
@@ -83,7 +50,7 @@ class NoteOnEvent(Event):
 
     @property
     def shifted_id(self):
-        return self.id - EventInformation.note_on_events[0]
+        return int(self.id - NOTE_ON_EVENTS[0])
 
     def get_midi_event(self, tick_delay: int):
         return midi.NoteOnEvent(pitch=self.shifted_id,
@@ -97,7 +64,7 @@ class NoteOffEvent(Event):
 
     @property
     def shifted_id(self):
-        return self.id - EventInformation.note_off_events[0]
+        return int(self.id - NOTE_OFF_EVENTS[0])
 
     def get_midi_event(self, tick_delay: int):
         return midi.NoteOffEvent(pitch=self.shifted_id,
@@ -110,7 +77,49 @@ class TimeshiftEvent(Event):
 
     @property
     def shifted_id(self):
-        return self.id - EventInformation.timeshift_events[0]
+        return int(self.id - TIMESHIFT_EVENTS[0])
 
     def get_tick_delay(self):
         return self.shifted_id * NUM_TICKS_IN_A_BIN
+
+
+
+def get_melody_from_ids(ids):
+    melody = Melody()
+    melody.notes = [create_event_from_id(id) for id in ids if id >= FEATURE_OFFSET]
+    return melody
+
+
+def create_event_from_id(id):
+    event = None
+    if id >= NUM_EVENTS or id < NOTE_ON_EVENTS[0]:
+        raise ValueError("ID {} is not in range [{}, {}]".format(id,
+                                                                 NOTE_ON_EVENTS[0],
+                                                                 NUM_EVENTS))
+    elif id >= TIMESHIFT_EVENTS[0]:
+        event = TimeshiftEvent(id)
+    elif id >= NOTE_OFF_EVENTS[0]:
+        event = NoteOffEvent(id)
+    elif id >= NOTE_ON_EVENTS[0]:
+        event = NoteOnEvent(id)
+
+    return event
+
+
+def create_note_on_event(pitch: int):
+    return NoteOnEvent(NOTE_ON_EVENTS[0] + pitch)
+
+
+def create_note_off_event(pitch: int):
+    return NoteOffEvent(NOTE_OFF_EVENTS[0] + pitch)
+
+
+def create_timeshift_event(timeshift_ticks: int):
+    assert MIN_TICKS <= timeshift_ticks < MAX_TICKS, \
+        "Time shift must be between {} ticks and {} ticks. It is {}.".format(MIN_TICKS,
+                                                                             MAX_TICKS,
+                                                                             timeshift_ticks)
+
+    binned_shift = int((timeshift_ticks - MIN_TICKS) / NUM_TICKS_IN_A_BIN)
+    return TimeshiftEvent(TIMESHIFT_EVENTS[0] + binned_shift)
+

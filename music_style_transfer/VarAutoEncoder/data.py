@@ -59,21 +59,21 @@ class ToyData(Dataset):
                  batch_size: int = 3):
         super(ToyData, self).__init__(batch_size)
         self.batch_size = batch_size
-        self.iter = mx.io.NDArrayIter({'data0': mx.nd.array([[1, 1, 2, 3, 0],
-                                                             [1, 2, 3, 4, 0],
-                                                             [1, 3, 4, 5, 0]]),
+        self.iter = mx.io.NDArrayIter({'data0': mx.nd.array([[1, 5, 6, 7, 0],
+                                                             [1, 6, 7, 8, 0],
+                                                             [1, 7, 8, 9, 0]]),
                                        'data1': mx.nd.array([4,4,4]),
                                        'data2': mx.nd.array([0,1,2])},
-                                      label={'labels': mx.nd.array([[1, 2, 3, 0, 0],
-                                                                    [2, 3, 4, 0, 0],
-                                                                    [3, 4, 5, 0, 0]])},
+                                      label={'labels': mx.nd.array([[5, 6, 7, 2, 0],
+                                                                    [6, 7, 8, 2, 0],
+                                                                    [7, 8, 9, 2, 0]])},
                                       batch_size=self.batch_size, shuffle=False)
 
     def num_classes(self):
         return 3
 
     def num_tokens(self):
-        return 6
+        return 10
 
     def __iter__(self):
         self.iter.reset()
@@ -87,7 +87,7 @@ class MelodyDataset(Dataset):
                  maximum_sequence_length: int,
                  melodies: Dict[str, List[Melody]]):
         super().__init__(batch_size)
-        self.max_seq_len = maximum_sequence_length + 1 # to accomodate eos and sos symbols
+        self.max_seq_len = maximum_sequence_length
         self.mask_offset = 1
         self._initialize(melodies)
         self._log_dataset()
@@ -123,69 +123,75 @@ class MelodyDataset(Dataset):
         return self.n_classes
 
     def num_tokens(self):
-        return N_FEATURES_WITHOUT_SILENCE + self.mask_offset
+        return NUM_EVENTS
 
     def _get_token_arrays(self):
-        all_tokens, all_labels, all_classes = [], [], []
-        tokens, labels = None, None
+        all_tokens, all_classes = [], []
+        tokens = None
 
-        print(self.max_seq_len)
         for class_idx, melodies_for_class in enumerate(self.melodies.values()):
-
             for i, melody in enumerate(melodies_for_class):
-
                 tokens = np.full((self.max_seq_len,), fill_value=PAD_ID)
-                labels = np.zeros_like(tokens)
-                tokens[0] = SOS_ID
 
                 for j, event in enumerate(melody):
-                    rel_index = j % (self.max_seq_len-1)
-                    labels[rel_index] = tokens[rel_index+1] = FEATURE_OFFSET + event.id
+                    rel_index = j % self.max_seq_len
+                    tokens[rel_index] = FEATURE_OFFSET + event.id
 
-                    if j % (self.max_seq_len - 1) == 0:
-                        labels[-1] = EOS_ID
+                    if rel_index == self.max_seq_len:
                         all_tokens.append(tokens)
-                        all_labels.append(labels)
                         all_classes.append(class_idx)
+                        tokens = np.full((self.max_seq_len,), fill_value=PAD_ID)
 
-                        tokens = np.zeros((self.max_seq_len, ))
-                        labels = np.zeros_like(tokens)
-                        tokens[0] = SOS_ID
-
-                labels[rel_index + 1] = EOS_ID
                 all_tokens.append(tokens)
-                all_labels.append(labels)
                 all_classes.append(class_idx)
 
             # possibly empty sequences if max sequence length splits input exactly
-            if tokens.max() > 0.:
+            if tokens[0] != PAD_ID:
                 all_tokens.append(tokens)
-                all_labels.append(labels)
                 all_classes.append(class_idx)
 
-        self.tokens = mx.nd.array(np.concatenate(np.expand_dims(all_tokens, axis=0), axis=0))
-        self.labels = mx.nd.array(np.concatenate(np.expand_dims(all_tokens, axis=0), axis=0))
+        num_samples = len(all_tokens)
+        assert num_samples > 0, "Empty sequences were found"
+
+        # add sentence start (SOS) to input data
+        data = mx.nd.array(np.concatenate(np.expand_dims(all_tokens, axis=0), axis=0))
+        self.tokens = mx.nd.concatenate([mx.nd.full(shape=(num_samples, 1), val=SOS_ID), data], axis=1)
+
+        # add a PAD-ID to the labels
+        # and replace the last PAD-ID with a sentence end (EOS)
+        seq_lens = self._count_sequence_length(data)
+        self.labels = mx.nd.concatenate([data, mx.nd.full(shape=(num_samples, 1), val=PAD_ID)], axis=1)
+        self.labels[:, seq_lens] = EOS_ID
         self.classes = mx.nd.array(all_classes)
 
         print("Tokens.shape {}".format(self.tokens.shape))
         print("Labels.shape {}".format(self.labels.shape))
         print("classes.shape {}".format(self.classes.shape))
 
-        assert self.classes.size > 0, "Empty sequences were found"
+    def _count_sequence_length(self, tokens):
+        seq_lens = mx.nd.where(tokens != PAD_ID,
+                               mx.nd.ones_like(tokens),
+                               mx.nd.zeros_like(tokens)).sum(axis=1)
+        return seq_lens
 
     def __iter__(self):
         self.iter.reset()
         for batch in self.iter:
-
-            # estimate the sequence length of the batch
-            tokens = batch.data[0]
-            seq_lens = mx.nd.where(tokens != PAD_ID,
-                                   mx.nd.ones_like(tokens),
-                                   mx.nd.zeros_like(tokens)).sum(axis=1)
-
-            # insert it at the second position
-            batch.data.insert(1, seq_lens)
+            self._preprocess_batch(batch)
             yield batch
+
+    def _preprocess_batch(self, batch):
+        # estimate the sequence lengths of each sample in the batch
+        tokens = batch.data[0]
+        seq_lens = self._count_sequence_length(tokens)
+
+        # insert the sequence lengths at the second position
+        batch.data.insert(1, seq_lens)
+
+        # pad to the maximum sequence length in this batch
+        max_seq_len = int(mx.nd.max(seq_lens).asscalar())
+        batch.data[0] = batch.data[0][:,:max_seq_len]
+        batch.label[0] = batch.label[0][:,:max_seq_len]
 
 
 def load_dataset(loader_train: Loader,
@@ -198,7 +204,7 @@ def load_dataset(loader_train: Loader,
         val = MelodyDataset(batch_size, loader_val.max_sequence_length, loader_val.melodies)
         return train, val
 
-    if split_percentage is None:
+    if split_percentage <= 0.:
         dataset = MelodyDataset(batch_size, loader_train.max_sequence_length, loader_train.melodies)
         return dataset, None
 

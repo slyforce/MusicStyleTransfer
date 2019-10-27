@@ -1,8 +1,6 @@
-from MIDIUtil.Melody import EventInformation, NoteOnEvent, NoteOffEvent, TimeshiftEvent
-
-from .Melody import Melody
-
+from music_style_transfer.MIDIUtil.Melody import *
 from music_style_transfer.MIDIUtil.defaults import *
+
 import midi
 
 
@@ -33,7 +31,6 @@ class MIDIReader():
 class EventBasedMIDIReader(MIDIReader):
     def __init__(self):
         super().__init__(0)
-        self.event_factory = EventInformation()
 
     def read_file(self, file_name):
         # Array of Melody objects
@@ -82,14 +79,14 @@ class EventBasedMIDIReader(MIDIReader):
             if isinstance(event, midi.NoteOnEvent) or isinstance(event, midi.NoteOffEvent):
                 [note, velocity] = event.data
                 while delta_t > 0:
-                    events.append(EventInformation.create_timeshift_event(delta_t % MAX_TICKS))
+                    events.append(create_timeshift_event(delta_t % MAX_TICKS))
                     delta_t -= MAX_TICKS
 
                 if velocity > 0:
-                    events.append(EventInformation.create_note_on_event(note))
+                    events.append(create_note_on_event(note))
 
                 elif velocity == 0:
-                    events.append(EventInformation.create_note_off_event(note))
+                    events.append(create_note_off_event(note))
 
                 prev_t = cur_t
 
@@ -125,11 +122,9 @@ class MelodyWriter:
             if isinstance(event, TimeshiftEvent):
                 tick_delay += event.get_tick_delay()
 
-            elif isinstance(event, NoteOnEvent) or isinstance(event, NoteOffEvent):
+            elif isinstance(event, (NoteOnEvent, NoteOffEvent)):
                 track.append(event.get_midi_event(int(tick_delay)))
                 tick_delay = 0
-
-        return
 
     def _create_bpm_event(self, melody):
         bpm_event = midi.SetTempoEvent()
