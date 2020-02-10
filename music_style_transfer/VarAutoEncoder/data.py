@@ -123,6 +123,7 @@ class MelodyDataset(Dataset):
         for c, m in self.melodies.items():
             print("Class {} has {} melodies of maximum length {}".format(c, len(m), self.seen_max_sequence_length ))
         print("")
+
     def num_classes(self):
         return self.n_classes
 
@@ -139,8 +140,7 @@ class MelodyDataset(Dataset):
 
                 for j, event in enumerate(melody):
                     rel_index = j % self.max_seq_len
-                    tokens[rel_index] = FEATURE_OFFSET + event.id
-
+                    tokens[rel_index] = event.id
                     if rel_index == self.max_seq_len-1:
                         all_tokens.append(tokens)
                         all_classes.append(class_idx)

@@ -128,7 +128,9 @@ class Trainer:
         start_time = time()
         self.train_state = TrainingState()
 
-        print("Starting training")
+        # try to resume from checkpoint if it exists
+        self._load_latest_checkpoint(model_folder)
+
         for epoch in range(epochs):
             for batch in dataset:
                 self._step(batch)
@@ -183,12 +185,29 @@ class Trainer:
         self.kl_metric.update(mx.nd.ones_like(kl_loss), kl_loss)
         self.main_metric.update(mx.nd.ones_like(loss), loss)
 
+    def _load_latest_checkpoint(self, model_folder):
+        print("Looking into folder {} for a valid training.".format(model_folder))
+        try:
+            latest_checkpoint = utils.get_latest_checkpoint_index(model_folder)
+        except:
+            print("No checkpoint was found. Starting training from scratch")
+            return
+
+        print("Checkpoint {} found. Resuming training.".format(latest_checkpoint))
+        utils.load_model_parameters(self.model,
+                                    os.path.join(model_folder, "params.{}".format(latest_checkpoint)),
+                                    self.context)
+        self.train_state = utils.load_object(os.path.join(model_folder, "train_state.pkl"))
+
     def _checkpoint(self, model_folder, validation_dataset):
         self.train_state.n_checkpoints += 1
         print("\nCheckpoint {} reached.".format(self.train_state.n_checkpoints))
 
-        # save model parameters
-        utils.save_model(self.model, model_folder + '/params.{}'.format(self.train_state.n_checkpoints))
+        # save model parameters and train state
+        utils.save_model(self.model, os.path.join(model_folder, 'params.{}'.format(self.train_state.n_checkpoints)))
+        utils.save_object(self.train_state, os.path.join(model_folder, "train_state.pkl"))
+
+        # reset metrics
         self._reset_metrics()
 
         # return early if no validation is required

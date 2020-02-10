@@ -120,6 +120,8 @@ def create_timeshift_event(timeshift_ticks: int):
                                                                              MAX_TICKS,
                                                                              timeshift_ticks)
 
+
     binned_shift = int((timeshift_ticks - MIN_TICKS) / NUM_TICKS_IN_A_BIN)
+    assert TIMESHIFT_EVENTS[0] + binned_shift <= TIMESHIFT_EVENTS[1]
     return TimeshiftEvent(TIMESHIFT_EVENTS[0] + binned_shift)
 

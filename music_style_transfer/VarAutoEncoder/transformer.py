@@ -59,6 +59,7 @@ class MultiHeadDotAttention(mx.gluon.HybridBlock):
         self.num_heads = num_heads
         self.is_self_attention = is_self_attention
         self.mask_future_timesteps = mask_future_timesteps
+        self.is_incremental = is_self_attention and mask_future_timesteps # basically decoder self attention
 
         with self.name_scope():
             self.W_k = mx.gluon.nn.Dense(units=self.model_dim, in_units=self.model_dim, flatten=False)
@@ -66,17 +67,31 @@ class MultiHeadDotAttention(mx.gluon.HybridBlock):
             self.W_v = mx.gluon.nn.Dense(units=self.model_dim, in_units=self.model_dim, flatten=False)
             self.W_proj = mx.gluon.nn.Dense(units=self.model_dim, in_units=self.model_dim, flatten=False)
 
+    def compute_with_cache(self, x, module, key, cache):
+        if cache is None:
+            return module(x)
+
+        if key in cache and self.is_incremental:
+            key[cache] = mx.nd.concat([key[cache], module(x)], axis=1)
+        elif key not in cache:
+            key[cache] = module(x)
+        return key[cache]
+
     def hybrid_forward(self,
                        F,
                        keys_values: mx.nd.ndarray,
                        queries: mx.nd.ndarray,
-                       keys_values_mask: mx.nd.ndarray):
+                       keys_values_mask: mx.nd.ndarray,
+                       cache = None):
         B, T_K, _ = keys_values.shape
         _, T_Q, _ = queries.shape
 
-        K = self.W_k(keys_values).reshape(shape=[B, T_K, self.num_heads, -1]).swapaxes(1, 2)
+        K = self.compute_with_cache(keys_values, self.W_k, "keys", cache)
+        V = self.compute_with_cache(keys_values, self.W_v, "values", cache)
+
+        K = K.reshape(shape=[B, T_K, self.num_heads, -1]).swapaxes(1, 2)
+        V = V.reshape(shape=[B, T_K, self.num_heads, -1]).swapaxes(1, 2)
         Q = self.W_q(queries).reshape(shape=[B, T_Q, self.num_heads, -1]).swapaxes(1, 2)
-        V = self.W_v(keys_values).reshape(shape=[B, T_K, self.num_heads, -1]).swapaxes(1, 2)
 
         att_logits = mx.nd.linalg_gemm2(K, Q, transpose_b=True)
         att_logits = att_logits / mx.nd.sqrt(mx.nd.full(shape=1, val=self.attention_dim))
@@ -85,9 +100,7 @@ class MultiHeadDotAttention(mx.gluon.HybridBlock):
 
         attended_values = mx.nd.linalg_gemm2(att_probs, V, transpose_a=True)
         attended_values = attended_values.swapaxes(1, 2).reshape([B, T_Q, -1])
-
-        attended_values_proj = self.W_proj(attended_values)
-        return attended_values_proj
+        return self.W_proj(attended_values)
 
     def _mask_logits(self, att_logits: mx.nd.ndarray, padding_mask: mx.nd.ndarray):
         # att_logits [batch_size, num_heads , T_K, T_Q]
@@ -112,7 +125,6 @@ class MultiHeadDotAttention(mx.gluon.HybridBlock):
         return output
 
 
-
 class TransformerEncoderLayer(mx.gluon.HybridBlock):
     def __init__(self,
                  config: TransformerConfig):
@@ -135,29 +147,109 @@ class TransformerEncoderLayer(mx.gluon.HybridBlock):
 
             self.dropout = mx.gluon.nn.Dropout(rate=self.config.dropout)
 
-    def hybrid_forward(self, F, input, input_mask):
-        x = input
-        x_att = self.self_attention(input, input, input_mask)
-        x_att = self.ln1(self.dropout(x_att))
-        x = x + x_att
+    def hybrid_forward(self, F, x, input_mask):
 
-        x_att = self.ff(input)
-        x_att = self.ln2(self.dropout(x_att))
-        x = x + x_att
+        # self-attention with no caching
+        x_att = self.self_attention(x, x, input_mask, None)
+        x = self.ln1(x + self.dropout(x_att))
 
+        x_att = self.ff(x)
+        x = self.ln2(x + self.dropout(x_att))
         return x
 
 
-class TransformerEncoder(mx.gluon.HybridBlock):
+class TransformerDecoderLayer(mx.gluon.HybridBlock):
+    def __init__(self,
+                 config: TransformerConfig):
+        super().__init__()
+        self.config = config
+        assert self.config.model_size % self.config.num_heads == 0
+
+        with self.name_scope():
+            self.self_attention = MultiHeadDotAttention(attention_dim=int(self.config.model_size / self.config.num_heads),
+                                                        num_heads=self.config.num_heads,
+                                                        model_dim=self.config.model_size,
+                                                        is_self_attention=True,
+                                                        mask_future_timesteps=False)
+            self.ln1 = mx.gluon.nn.LayerNorm(in_channels=self.config.model_size)
+
+            self.ff = DualFeedForward(input_dimension=self.config.model_size,
+                                      dimension=self.config.model_size * 4,
+                                      dropout=self.config.dropout)
+            self.ln3 = mx.gluon.nn.LayerNorm(in_channels=self.config.model_size)
+
+            self.dropout = mx.gluon.nn.Dropout(rate=self.config.dropout)
+
+    def hybrid_forward(self, F,
+                       decoder_in,  decoder_mask,
+                       caches,
+                       ):
+        x_att = self.self_attention(decoder_in, decoder_in, decoder_mask, None if caches is None else caches["self-attention"])
+        x = self.ln1(decoder_in + self.dropout(x_att))
+
+        x_att = self.ff(x)
+        x = self.ln3(x_att + self.dropout(x_att))
+        return x
+
+
+def positional_encodings(model_size, maximum_sequence_length):
+    position_enc = np.arange(maximum_sequence_length).reshape((-1, 1)) \
+                   / (np.power(10000,
+                               (2. / model_size) * np.arange(model_size).reshape((1, -1))))
+    # Apply the cosine to even columns and sin to odds.
+    position_enc[:, 0::2] = np.sin(position_enc[:, 0::2])  # dim 2i
+    position_enc[:, 1::2] = np.cos(position_enc[:, 1::2])  # dim 2i+1
+    return mx.nd.array(position_enc)
+
+
+class TransformerDecoder(mx.gluon.HybridBlock):
     def __init__(self,
                  config: TransformerConfig,
-                 maximum_sequence_length: Optional[int] = None):
+                 maximum_sequence_length: Optional[int] = 10000):
         super().__init__()
         self.config = config
         self.maximum_sequence_length = maximum_sequence_length
 
         with self.name_scope():
-            self.pos_embeddings = self._get_positional_encodings()
+            self.pos_embeddings = positional_encodings(self.config.model_size, self.maximum_sequence_length)
+            self.layers = [TransformerDecoderLayer(config)
+                           for _ in range(self.config.num_layers)]
+
+            # filthy hack to use lists of models
+            for i, layer in enumerate(self.layers):
+                self.__setattr__("layer{}".format(i), layer)
+
+    def hybrid_forward(self, F, inputs, input_mask):
+        return self.forward_train(F, inputs, input_mask)
+
+    def forward_train(self, F,
+                      decoder_inputs, decoder_mask):
+        seq_len = decoder_inputs.shape[1]
+        inputs = mx.nd.sqrt(mx.nd.full(shape=(1,), val=self.config.model_size)) * decoder_inputs + self.pos_embeddings[:seq_len]
+        for layer in self.layers:
+            inputs = layer.forward(inputs, decoder_mask, None)
+        return inputs
+
+    def forward_inference(self, decoder_state):
+        inputs = decoder_state.tokens
+        mask = mx.nd.ones_like(inputs) # during inference, we do not need to pad anything
+
+        seq_len = inputs.shape[1]
+        inputs = mx.nd.sqrt(mx.nd.full(shape=(1,), val=self.config.model_size)) * inputs + self.pos_embeddings[:seq_len]
+        for layer in self.layers:
+            inputs = layer.forward(inputs, mask)
+        return inputs
+
+
+class TransformerEncoder(mx.gluon.HybridBlock):
+    def __init__(self,
+                 config: TransformerConfig,
+                 maximum_sequence_length: Optional[int] = 10000):
+        super().__init__()
+        self.config = config
+        self.maximum_sequence_length = maximum_sequence_length
+        with self.name_scope():
+            self.pos_embeddings = positional_encodings(self.config.model_size, self.maximum_sequence_length)
             self.layers = [TransformerEncoderLayer(config)
                            for _ in range(self.config.num_layers)]
 
@@ -167,22 +259,8 @@ class TransformerEncoder(mx.gluon.HybridBlock):
 
     def hybrid_forward(self, F, inputs, input_mask):
         seq_len = inputs.shape[1]
-
         inputs = mx.nd.sqrt(mx.nd.full(shape=(1,), val=self.config.model_size)) * inputs + self.pos_embeddings[:seq_len]
         for layer in self.layers:
             inputs = layer.forward(inputs, input_mask)
-
         return inputs
 
-    def _get_positional_encodings(self):
-        """Init the sinusoid position encoding table """
-        if self.maximum_sequence_length is None:
-            print("Setting maximum sequence length to 10000 for transformer positional encondings.")
-            self.maximum_sequence_length = 10000
-
-        position_enc = np.arange(self.maximum_sequence_length).reshape((-1, 1)) \
-                       / (np.power(10000, (2. / self.config.model_size) * np.arange(self.config.model_size).reshape((1, -1))))
-        # Apply the cosine to even columns and sin to odds.
-        position_enc[:, 0::2] = np.sin(position_enc[:, 0::2])  # dim 2i
-        position_enc[:, 1::2] = np.cos(position_enc[:, 1::2])  # dim 2i+1
-        return mx.nd.array(position_enc)

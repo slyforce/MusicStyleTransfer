@@ -25,10 +25,12 @@ def create_toy_model_config(data):
             input_dim=data.num_tokens(),
         ),
         decoder_config=model.DecoderConfig(
-            lstm_config=model.LSTMConfig(
-                n_layers=1,
-                hidden_dim=32,
-                dropout=0.0),
+            transformer_config=TransformerConfig(
+                model_size=32,
+                dropout=0.0,
+                num_layers=1,
+                vocab_size=data.num_tokens(),
+                num_heads=2),
             latent_dim=16,
             num_classes=data.num_classes(),
             output_dim=data.num_tokens()
@@ -156,7 +158,6 @@ def main():
                           context,
                           None,
                           args)
-
 
     t = trainer.Trainer(config=create_train_config(args),
                         context=context,

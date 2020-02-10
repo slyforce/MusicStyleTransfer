@@ -1,9 +1,11 @@
 import mxnet as mx
 from mxnet.gluon.rnn import LSTM
 from mxnet.gluon.nn import Dense, Embedding
+import sys
 
 from .config import Config
-from .transformer import TransformerEncoder, TransformerConfig
+from .transformer import TransformerEncoder, TransformerConfig, TransformerDecoder
+from music_style_transfer.MIDIUtil.defaults import *
 
 
 class LSTMConfig(Config):
@@ -19,12 +21,12 @@ class LSTMConfig(Config):
 
 class DecoderConfig(Config):
     def __init__(self,
-                 lstm_config: LSTMConfig,
+                 transformer_config: TransformerConfig,
                  latent_dim: int,
                  num_classes: int,
                  output_dim: int):
         super().__init__()
-        self.lstm_config = lstm_config
+        self.transformer_config = transformer_config
         self.latent_dim = latent_dim
         self.num_classes = num_classes
         self.output_dim = output_dim
@@ -102,7 +104,22 @@ class Encoder(mx.gluon.HybridBlock):
         return means, stddevs
 
 
-class Decoder(mx.gluon.HybridBlock):
+class DecoderState:
+    """
+    To be used in inference to keep track of decoder states.
+    The token sequence or Pre-computed attention values e.g.
+    """
+    def __init__(self, batch_size: int):
+        self.reset(batch_size)
+
+    def advance_state(self, tokens):
+        self.tokens = mx.nd.concatenate([self.tokens, tokens])
+
+    def reset(self, batch_size: int):
+        self.tokens = mx.nd.full(shape=(batch_size, ), val=SOS_ID)
+
+
+class LSTMDecoder(mx.gluon.HybridBlock):
     def __init__(self, config: DecoderConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.config = config
@@ -177,18 +194,74 @@ class Decoder(mx.gluon.HybridBlock):
         return probs, next_states
 
 
+class Decoder(mx.gluon.HybridBlock):
+    def __init__(self, config: DecoderConfig, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.config = config
+        self._define_parameters()
+
+    def _define_parameters(self):
+        with self.name_scope():
+            self.latent2hid = Dense(in_units=self.config.latent_dim,
+                                    units=self.config.transformer_config.model_size)
+
+            self.class2hid = Embedding(input_dim=self.config.num_classes,
+                                       output_dim=self.config.transformer_config.model_size)
+
+            self.embedding = Embedding(input_dim=self.config.output_dim,
+                                       output_dim=self.config.transformer_config.model_size)
+
+            self.decoder = TransformerDecoder(self.config.transformer_config)
+
+            self.output_layer = Dense(in_units=self.config.transformer_config.model_size,
+                                      units=self.config.output_dim,
+                                      flatten=False)
+
+    def get_initial_state(self, F, classes, hidden_state):
+        # shape [B, 1, D]
+        res = self.latent2hid(hidden_state) + self.class2hid(classes)
+        return mx.nd.expand_dims(res, axis=1)
+
+    def hybrid_forward(self, F,  tokens, seq_length, hidden_states, classes):
+        return self.forward_train(F, tokens, seq_length, hidden_states, classes)
+
+    def forward_train(self, F, tokens: mx.nd.NDArray, seq_length, hidden_states, classes):
+        batch_size, seq_len = tokens.shape
+
+        # shape: (batch_size, seq_len, feature_dim)
+        token_embeddings = self.embedding(tokens)
+
+        # shape: (batch_size, seq_len + 1, feature_dim)
+        input_states = mx.nd.concat(self.get_initial_state(F, classes, hidden_states),
+                                    token_embeddings, dim=1)
+        decoder_mask = mx.nd.SequenceMask(mx.nd.ones(shape=(batch_size, seq_len+1), dtype="float32"),
+                                          use_sequence_length=True, sequence_length=seq_length+1, axis=1)
+
+        # shape: (batch_size, seq_len + 1, feature_dim)
+        desired_embeddings = self.decoder.forward_train(F, input_states, decoder_mask)
+        desired_embeddings = desired_embeddings[:,1:,:]
+
+        # shape: (batch_size, seq_len + 1, output_dim)
+        probs = F.softmax(self.output_layer(desired_embeddings), axis=-1)
+        return probs
+
+    def forward_inference(self, tokens, previous_state, classes, step):
+        raise NotImplemented
+
+
 class Model(mx.gluon.HybridBlock):
 
     def __init__(self,
                  config: ModelConfig,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
+        print("Creating a model with the following configuration:")
+        config.output_to_stream(sys.stdout)
         with self.name_scope():
             self.decoder = Decoder(config.decoder_config)
             self.encoder = Encoder(config.encoder_config)
 
     def hybrid_forward(self, F, tokens, seq_lens, classes):
-
         # encode the inputs
         means, vars = self.encoder(tokens, seq_lens, classes)
 

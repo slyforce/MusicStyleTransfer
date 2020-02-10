@@ -217,3 +217,6 @@ class Config(yaml.YAMLObject, metaclass=TaggedYamlObjectMetaclass):
                     (k, str(v), k, self))
             else:
                 setattr(self, k, v)
+
+    def output_to_stream(self, stream):
+        yaml.dump(self, stream)
