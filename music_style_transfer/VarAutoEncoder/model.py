@@ -109,14 +109,21 @@ class DecoderState:
     To be used in inference to keep track of decoder states.
     The token sequence or Pre-computed attention values e.g.
     """
-    def __init__(self, batch_size: int):
-        self.reset(batch_size)
+    def __init__(self,
+                 batch_size: int,
+                 num_cache_layers: int):
+        self.reset(batch_size, num_cache_layers)
 
     def advance_state(self, tokens):
         self.tokens = mx.nd.concatenate([self.tokens, tokens])
+        self.t += 1
 
-    def reset(self, batch_size: int):
+    def reset(self,
+              batch_size: int,
+              num_cache_layers: int):
         self.tokens = mx.nd.full(shape=(batch_size, ), val=SOS_ID)
+        self.t = 1
+        self.caches = [{} for _ in range(num_cache_layers)]
 
 
 class LSTMDecoder(mx.gluon.HybridBlock):
@@ -239,6 +246,8 @@ class Decoder(mx.gluon.HybridBlock):
 
         # shape: (batch_size, seq_len + 1, feature_dim)
         desired_embeddings = self.decoder.forward_train(F, input_states, decoder_mask)
+
+        # prediction of the first token is irrelevant as it's a sentence begin token
         desired_embeddings = desired_embeddings[:,1:,:]
 
         # shape: (batch_size, seq_len + 1, output_dim)

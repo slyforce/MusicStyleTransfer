@@ -231,13 +231,14 @@ class TransformerDecoder(mx.gluon.HybridBlock):
         return inputs
 
     def forward_inference(self, decoder_state):
-        inputs = decoder_state.tokens
+        inputs = decoder_state.tokens[:,-1] # get the last tokens
+        inputs = mx.nd.expand_dims(inputs, axis=1) # [B,1,D]
         mask = mx.nd.ones_like(inputs) # during inference, we do not need to pad anything
 
-        seq_len = inputs.shape[1]
-        inputs = mx.nd.sqrt(mx.nd.full(shape=(1,), val=self.config.model_size)) * inputs + self.pos_embeddings[:seq_len]
-        for layer in self.layers:
-            inputs = layer.forward(inputs, mask)
+        t = decoder_state.step
+        inputs = mx.nd.sqrt(mx.nd.full(shape=(1,), val=self.config.model_size)) * inputs + self.pos_embeddings[t:t+1]
+        for layer_idx, layer in enumerate(self.layers):
+            inputs = layer.forward(inputs, mask, decoder_state.caches[layer_idx])
         return inputs
 
 
