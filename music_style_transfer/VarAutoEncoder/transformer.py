@@ -70,12 +70,11 @@ class MultiHeadDotAttention(mx.gluon.HybridBlock):
     def compute_with_cache(self, x, module, key, cache):
         if cache is None:
             return module(x)
-
         if key in cache and self.is_incremental:
-            key[cache] = mx.nd.concat([key[cache], module(x)], axis=1)
+            cache[key] = mx.nd.concat([cache[key], module(x)], axis=1)
         elif key not in cache:
-            key[cache] = module(x)
-        return key[cache]
+            cache[key] = module(x)
+        return cache[key]
 
     def hybrid_forward(self,
                        F,
@@ -93,7 +92,9 @@ class MultiHeadDotAttention(mx.gluon.HybridBlock):
         V = V.reshape(shape=[B, T_K, self.num_heads, -1]).swapaxes(1, 2)
         Q = self.W_q(queries).reshape(shape=[B, T_Q, self.num_heads, -1]).swapaxes(1, 2)
 
+        print(K.shape, V.shape, Q.shape)
         att_logits = mx.nd.linalg_gemm2(K, Q, transpose_b=True)
+        print(att_logits.shape)
         att_logits = att_logits / mx.nd.sqrt(mx.nd.full(shape=1, val=self.attention_dim))
         att_logits = self._mask_logits(att_logits, keys_values_mask)
         att_probs = mx.nd.softmax(att_logits)
@@ -180,11 +181,19 @@ class TransformerDecoderLayer(mx.gluon.HybridBlock):
 
             self.dropout = mx.gluon.nn.Dropout(rate=self.config.dropout)
 
+    def get_cache(self, cache, key):
+        if cache is None:
+            return None
+
+        if key not in cache:
+            cache[key] = {}
+        return cache[key]
+
     def hybrid_forward(self, F,
                        decoder_in,  decoder_mask,
                        caches,
                        ):
-        x_att = self.self_attention(decoder_in, decoder_in, decoder_mask, None if caches is None else caches["self-attention"])
+        x_att = self.self_attention(decoder_in, decoder_in, decoder_mask, self.get_cache(caches, "self-attention"))
         x = self.ln1(decoder_in + self.dropout(x_att))
 
         x_att = self.ff(x)
@@ -230,12 +239,10 @@ class TransformerDecoder(mx.gluon.HybridBlock):
             inputs = layer.forward(inputs, decoder_mask, None)
         return inputs
 
-    def forward_inference(self, decoder_state):
-        inputs = decoder_state.tokens[:,-1] # get the last tokens
-        inputs = mx.nd.expand_dims(inputs, axis=1) # [B,1,D]
+    def forward_inference(self, decoder_state, inputs):
         mask = mx.nd.ones_like(inputs) # during inference, we do not need to pad anything
 
-        t = decoder_state.step
+        t = decoder_state.t
         inputs = mx.nd.sqrt(mx.nd.full(shape=(1,), val=self.config.model_size)) * inputs + self.pos_embeddings[t:t+1]
         for layer_idx, layer in enumerate(self.layers):
             inputs = layer.forward(inputs, mask, decoder_state.caches[layer_idx])

@@ -111,17 +111,19 @@ class DecoderState:
     """
     def __init__(self,
                  batch_size: int,
-                 num_cache_layers: int):
+                 num_cache_layers: int,
+                 initial_state: mx.nd.NDArray):
         self.reset(batch_size, num_cache_layers)
+        self.initial_state = initial_state
 
     def advance_state(self, tokens):
-        self.tokens = mx.nd.concatenate([self.tokens, tokens])
+        self.tokens = mx.nd.concat(self.tokens, tokens, dim=1)
         self.t += 1
 
     def reset(self,
               batch_size: int,
               num_cache_layers: int):
-        self.tokens = mx.nd.full(shape=(batch_size, ), val=SOS_ID)
+        self.tokens = mx.nd.full(shape=(batch_size, 1), val=SOS_ID)
         self.t = 1
         self.caches = [{} for _ in range(num_cache_layers)]
 
@@ -254,8 +256,20 @@ class Decoder(mx.gluon.HybridBlock):
         probs = F.softmax(self.output_layer(desired_embeddings), axis=-1)
         return probs
 
-    def forward_inference(self, tokens, previous_state, classes, step):
-        raise NotImplemented
+    def forward_inference(self, state):
+        # shape: (batch_size, seq_len, feature_dim)
+        token_embeddings = self.embedding(state.tokens[:,-1]).expand_dims(axis=1)
+
+        if state.t == 0:
+            # shape: (batch_size, seq_len + 1, feature_dim)
+            input_states = mx.nd.concat(state.initial_state,
+                                        token_embeddings, dim=1)
+        else:
+            input_states = token_embeddings
+
+        desired_embedding = self.decoder.forward_inference(state, input_states)
+        probs = mx.nd.softmax(self.output_layer(desired_embedding), axis=-1)
+        return probs
 
 
 class Model(mx.gluon.HybridBlock):

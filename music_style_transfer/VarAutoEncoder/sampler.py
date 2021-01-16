@@ -143,10 +143,13 @@ class SamplerBase:
         raise NotImplemented
 
     def compute_initial_decoder_state(self, tokens, seq_lens, classes):
-        means, vars = self.encoder(tokens, seq_lens, classes)
         # todo: implement more variants of this
+        means, vars = self.encoder(tokens, seq_lens, classes)
         latent_vector = means
-        return self.decoder.get_initial_state(mx.nd, classes, latent_vector)
+        state = self.decoder.get_initial_state(mx.nd, classes, latent_vector)
+        decoder_state = model.DecoderState(tokens.shape[0], num_cache_layers=len(self.decoder.decoder.layers), initial_state=state)
+        return decoder_state
+
 
 
 class Sampling(SamplerBase):
@@ -164,7 +167,7 @@ class Sampling(SamplerBase):
         sequences = mx.nd.full((beam_size, I_max), val=PAD_ID)
         sequences[:, 0] = SOS_ID
         scores = mx.nd.zeros((beam_size,))
-        previous_decoder_state = self.compute_initial_decoder_state(tokens, seq_lens, classes)
+        decoder_state = self.compute_initial_decoder_state(tokens, seq_lens, classes)
 
         if self.verbose:
             print("Inputs to sampling: ")
@@ -173,21 +176,17 @@ class Sampling(SamplerBase):
             print("classes: {}, {}".format(classes.shape, classes))
 
         for i in range(1, I_max):
-
-            prev_tokens = sequences[:, i-1]
-            probs, next_states = self.decoder.forward_inference(prev_tokens, previous_decoder_state, classes, i)
-
+            if self.verbose:
+                print("Start loop {} of sampling".format(i))
+            probs, next_states = self.decoder.forward_inference(decoder_state)
             next_outputs = mx.nd.random.multinomial(probs)
-
-            sequences[:, i] = next_outputs
             scores += -mx.nd.log(mx.nd.pick(probs, next_outputs))
+            decoder_state.advance_state(next_outputs)
 
-            previous_decoder_state = next_states
-
-            if mx.nd.sum(mx.nd.broadcast_logical_or(sequences[:,i] == SOS_ID, sequences[:, i] == PAD_ID)).asscalar() == beam_size:
+            if mx.nd.sum(mx.nd.broadcast_logical_or(decoder_state.tokens[:,i] == SOS_ID, decoder_state.tokens[:, i] == PAD_ID)).asscalar() == beam_size:
                 break
 
-        return sequences
+        return decoder_state.tokens
 
 
 class BeamSearchSampler(SamplerBase):
@@ -261,7 +260,7 @@ from .data import ToyData
 
 def sample_toy(args):
     sampler = get_sampler("sampling",
-                          args.model_output,
+                          "/tmp/music-style-transfer/toy/model",
                           mx.cpu(),
                           args.checkpoint,
                           args)
